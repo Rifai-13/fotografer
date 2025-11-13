@@ -21,8 +21,18 @@ interface Event {
   actual_photo_count: number
 }
 
-// Type untuk event status
-type EventStatus = 'active' | 'upcoming' | 'completed'
+// Type untuk hasil face match
+interface FaceMatch {
+  photo_id: string
+  similarity: number
+  image_url: string
+  bounding_box: {
+    Width: number
+    Height: number
+    Left: number
+    Top: number
+  }
+}
 
 export default function ScanPage() {
   const [isCameraOpen, setIsCameraOpen] = useState(false)
@@ -31,6 +41,7 @@ export default function ScanPage() {
   const [stream, setStream] = useState<MediaStream | null>(null)
   const [events, setEvents] = useState<Event[]>([])
   const [isLoadingEvents, setIsLoadingEvents] = useState(true)
+  const [isProcessing, setIsProcessing] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const router = useRouter()
@@ -45,19 +56,17 @@ export default function ScanPage() {
         console.log("📦 Fetching public events...")
 
         // Fetch semua event yang memiliki foto (public access)
-        // Gunakan RPC function atau query langsung ke events yang memiliki photos
         const { data: eventsData, error: eventsError } = await supabase
           .from('events')
           .select(`
             *,
             photos:photos(count)
           `)
-          .eq('status', 'active') // Hanya event yang aktif
+          .eq('status', 'active')
           .order('created_at', { ascending: false })
 
         if (eventsError) {
           console.error('Error fetching events:', eventsError)
-          // Fallback ke query sederhana
           await fetchEventsWithFallback()
           return
         }
@@ -94,10 +103,8 @@ export default function ScanPage() {
       }
     }
 
-    // Fallback function jika query kompleks gagal
     const fetchEventsWithFallback = async () => {
       try {
-        // Query sederhana: ambil semua event aktif
         const { data: eventsData, error: eventsError } = await supabase
           .from('events')
           .select('*')
@@ -108,7 +115,6 @@ export default function ScanPage() {
           throw eventsError
         }
 
-        // Untuk setiap event, hitung jumlah foto
         const eventsWithCounts = await Promise.all(
           (eventsData || []).map(async (event: Event) => {
             const { count } = await supabase
@@ -123,11 +129,9 @@ export default function ScanPage() {
           })
         )
 
-        // Filter hanya event yang memiliki foto
         const eventsWithPhotos = eventsWithCounts.filter((event: Event) => event.actual_photo_count > 0)
         setEvents(eventsWithPhotos)
         
-        // Auto-select first event dengan foto
         if (eventsWithPhotos.length > 0) {
           setSelectedEvent(eventsWithPhotos[0].id)
         }
@@ -160,7 +164,7 @@ export default function ScanPage() {
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
-          facingMode: 'user', // Kamera depan
+          facingMode: 'user',
           width: { ideal: 1280 },
           height: { ideal: 720 }
         } 
@@ -184,14 +188,11 @@ export default function ScanPage() {
       const canvas = canvasRef.current
       const context = canvas.getContext('2d')
       
-      // Set canvas size sama dengan video
       canvas.width = video.videoWidth
       canvas.height = video.videoHeight
       
-      // Gambar frame video ke canvas
       context?.drawImage(video, 0, 0, canvas.width, canvas.height)
       
-      // Stop kamera
       if (stream) {
         stream.getTracks().forEach(track => track.stop())
       }
@@ -206,32 +207,71 @@ export default function ScanPage() {
     openCamera()
   }
 
-  const usePhoto = () => {
-    if (!selectedEvent) {
-      alert('Silakan pilih event terlebih dahulu!')
+  const searchFaces = async () => {
+    if (!selectedEvent || !canvasRef.current) {
+      toast.error('Silakan ambil foto terlebih dahulu')
       return
     }
 
-    const selectedEventData = events.find((event: Event) => event.id === selectedEvent)
-    
-    if (!selectedEventData) {
-      alert('Event tidak ditemukan!')
-      return
-    }
+    setIsProcessing(true)
 
-    // Dapatkan gambar dari canvas sebagai base64
-    if (canvasRef.current) {
-      const imageData = canvasRef.current.toDataURL('image/jpeg')
-      
-      // Simulasi proses scanning AI
-      toast.success(`Foto berhasil diambil! Sistem sedang memindai wajah Anda di event: ${selectedEventData.name}`)
-      
-      // Redirect ke hasil pencarian dengan membawa data gambar
-      setTimeout(() => {
-        router.push(`/results?event=${selectedEvent}&image=${encodeURIComponent(imageData)}`)
-      }, 2000)
-    } else {
-      toast.error('Gagal mengambil foto. Silakan coba lagi.')
+    try {
+      // Convert canvas to blob
+      canvasRef.current.toBlob(async (blob) => {
+        if (!blob) {
+          toast.error('Gagal mengambil gambar')
+          setIsProcessing(false)
+          return
+        }
+
+        // Convert blob to base64
+        const reader = new FileReader()
+        reader.onload = async () => {
+          const base64Image = reader.result as string
+          const imageData = base64Image.split(',')[1] // Remove data:image/jpeg;base64, prefix
+
+          try {
+            // Send to our API for face recognition
+            const response = await fetch('/api/search-faces', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                eventId: selectedEvent,
+                image: imageData,
+                imageType: 'JPEG'
+              }),
+            })
+
+            const result = await response.json()
+
+            if (!response.ok) {
+              throw new Error(result.error || 'Gagal memproses gambar')
+            }
+
+            if (result.matches && result.matches.length > 0) {
+              toast.success(`Ditemukan ${result.matches.length} foto yang cocok!`)
+              // Redirect to results page with matches
+              router.push(`/results?event=${selectedEvent}&matches=${encodeURIComponent(JSON.stringify(result.matches))}`)
+            } else {
+              toast.warning('Tidak ditemukan foto yang cocok. Coba foto dengan pencahayaan yang lebih baik.')
+            }
+
+          } catch (error) {
+            console.error('Search error:', error)
+            toast.error('Gagal mencari foto. Silakan coba lagi.')
+          } finally {
+            setIsProcessing(false)
+          }
+        }
+
+        reader.readAsDataURL(blob)
+      }, 'image/jpeg', 0.8)
+    } catch (error) {
+      console.error('Error processing image:', error)
+      toast.error('Gagal memproses gambar')
+      setIsProcessing(false)
     }
   }
 
@@ -251,30 +291,6 @@ export default function ScanPage() {
     })
   }
 
-  const getEventStatus = (event: Event): EventStatus => {
-    if (event.actual_photo_count > 0) return 'active'
-    if (event.status === 'completed') return 'completed'
-    return 'upcoming'
-  }
-
-  const getStatusLabel = (status: EventStatus): string => {
-    switch (status) {
-      case 'active': return 'Aktif'
-      case 'upcoming': return 'Mendatang'
-      case 'completed': return 'Selesai'
-      default: return 'Aktif'
-    }
-  }
-
-  const getStatusColor = (status: EventStatus): string => {
-    switch (status) {
-      case 'active': return 'bg-green-100 text-green-800'
-      case 'upcoming': return 'bg-yellow-100 text-yellow-800'
-      case 'completed': return 'bg-gray-100 text-gray-800'
-      default: return 'bg-green-100 text-green-800'
-    }
-  }
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30 py-8">
       <div className="container mx-auto px-4 sm:px-6">
@@ -292,10 +308,10 @@ export default function ScanPage() {
           <Card className="border-0 shadow-lg">
             <CardHeader className="text-center space-y-1 pb-6">
               <CardTitle className="text-2xl font-bold text-gray-900">
-                Cari Foto Anda di Event
+                Cari Foto Anda dengan AI
               </CardTitle>
               <CardDescription className="text-gray-600">
-                Pilih event dan ambil foto selfie untuk menemukan foto-foto Anda
+                Gunakan teknologi face recognition untuk menemukan foto-foto Anda di event
               </CardDescription>
             </CardHeader>
             
@@ -315,7 +331,7 @@ export default function ScanPage() {
                   <div className="text-center py-8 text-gray-500">
                     <div className="text-4xl mb-4">📷</div>
                     <p className="mb-2">Belum ada event dengan foto yang tersedia</p>
-                    <p className="text-sm mb-4">Silakan coba lagi nanti atau hubungi penyelenggara event</p>
+                    <p className="text-sm mb-4">Silakan coba lagi nanti</p>
                   </div>
                 ) : (
                   <Select value={selectedEvent} onValueChange={setSelectedEvent}>
@@ -328,7 +344,7 @@ export default function ScanPage() {
                           <div className="flex flex-col">
                             <span className="font-medium">{event.name}</span>
                             <span className="text-sm text-gray-500">
-                              {formatDate(event.date)} • {formatPhotoCount(event.actual_photo_count)} foto tersedia
+                              {formatDate(event.date)} • {formatPhotoCount(event.actual_photo_count)} foto
                             </span>
                           </div>
                         </SelectItem>
@@ -348,12 +364,9 @@ export default function ScanPage() {
                           📅 {formatDate(getSelectedEventData()?.date || '')} • 📍 {getSelectedEventData()?.location}
                         </p>
                         <p className="text-blue-700 text-xs">
-                          📷 {formatPhotoCount(getSelectedEventData()?.actual_photo_count || 0)} foto tersedia untuk pencarian
+                          📷 {formatPhotoCount(getSelectedEventData()?.actual_photo_count || 0)} foto tersedia untuk pencarian AI
                         </p>
                       </div>
-                      <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(getEventStatus(getSelectedEventData()!))}`}>
-                        {getStatusLabel(getEventStatus(getSelectedEventData()!))}
-                      </span>
                     </div>
                   </div>
                 )}
@@ -363,7 +376,7 @@ export default function ScanPage() {
               {events.length > 0 && (
                 <div className="space-y-3">
                   <label className="text-sm font-medium text-gray-700">
-                    Ambil Foto Selfie
+                    Ambil Foto Selfie untuk menemukan Foto Anda
                   </label>
                   
                   <div className="relative bg-gray-100 rounded-xl overflow-hidden aspect-[4/3] flex items-center justify-center">
@@ -377,8 +390,8 @@ export default function ScanPage() {
                         </div>
                         <p className="text-gray-600 mb-4">
                           {selectedEvent 
-                            ? 'Kamera siap untuk mengambil foto selfie Anda' 
-                            : 'Pilih event terlebih dahulu untuk membuka kamera'
+                            ? 'Ambil foto selfie untuk pencarian wajah dengan AI' 
+                            : 'Pilih event terlebih dahulu'
                           }
                         </p>
                         <Button 
@@ -418,14 +431,23 @@ export default function ScanPage() {
                             onClick={retakePhoto}
                             variant="outline"
                             className="bg-white hover:bg-gray-50 text-gray-700"
+                            disabled={isProcessing}
                           >
                             Ambil Ulang
                           </Button>
                           <Button 
-                            onClick={usePhoto}
+                            onClick={searchFaces}
+                            disabled={isProcessing}
                             className="bg-blue-600 hover:bg-blue-700 text-white"
                           >
-                            Cari Foto Saya
+                            {isProcessing ? (
+                              <>
+                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                                Mencari...
+                              </>
+                            ) : (
+                              'Cari dengan AI'
+                            )}
                           </Button>
                         </div>
                       </>
@@ -434,38 +456,29 @@ export default function ScanPage() {
                 </div>
               )}
 
-              {/* Instructions */}
-              <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-                <h3 className="font-semibold text-blue-900 mb-2">Tips Foto Selfie Terbaik:</h3>
+              {/* AI Features Info */}
+              <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg p-4 border border-blue-200">
+                <h3 className="font-semibold text-blue-900 mb-2">Teknologi AI yang Digunakan:</h3>
                 <ul className="text-sm text-blue-700 space-y-1">
-                  <li>• Pastikan wajah terlihat jelas dengan pencahayaan yang baik</li>
-                  <li>• Hindari bayangan pada wajah</li>
-                  <li>• Pandangan lurus ke kamera</li>
-                  <li>• Jangan menggunakan aksesori yang menutupi wajah</li>
-                  <li>• Pastikan latar belakang tidak terlalu ramai</li>
+                  <li>• <strong>AWS Rekognition</strong> - Face recognition technology</li>
+                  <li>• Pencarian wajah dengan akurasi tinggi</li>
+                  <li>• Bisa menemukan wajah Anda di foto grup</li>
+                  <li>• Mendeteksi wajah dari berbagai angle</li>
+                  <li>• Proses pencarian aman dan privat</li>
                 </ul>
               </div>
 
-              {/* Event Info Card */}
-              {selectedEvent && getSelectedEventData() && (
-                <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="font-semibold text-gray-900">Event yang Dipilih</h3>
-                      <p className="text-sm text-gray-600">{getSelectedEventData()?.name}</p>
-                      <p className="text-xs text-gray-500 mt-1">
-                        {formatDate(getSelectedEventData()?.date || '')} • {getSelectedEventData()?.location}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm text-gray-600">Foto tersedia</p>
-                      <p className="font-semibold text-gray-900">
-                        {formatPhotoCount(getSelectedEventData()?.actual_photo_count || 0)}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
+              {/* Instructions */}
+              <div className="bg-green-50 rounded-lg p-4 border border-green-200">
+                <h3 className="font-semibold text-green-900 mb-2">Tips untuk Hasil Terbaik:</h3>
+                <ul className="text-sm text-green-700 space-y-1">
+                  <li>• Pastikan wajah terlihat jelas dan tidak tertutup</li>
+                  <li>• Pencahayaan yang baik tanpa bayangan</li>
+                  <li>• Pandangan lurus ke kamera</li>
+                  <li>• Ekspresi wajah natural</li>
+                  <li>• Hindari topi atau kacamata hitam</li>
+                </ul>
+              </div>
             </CardContent>
           </Card>
         </div>
