@@ -12,30 +12,63 @@ interface Photo {
   size: number;
 }
 
-export default function ManagePhotos({ params }: { params: { eventId: string } }) {
+export default function ManagePhotos({ params }: { params: Promise<{ eventId: string }> }) {
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [eventId, setEventId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+
+  // Unwrap the params promise
+  useEffect(() => {
+    async function unwrapParams() {
+      try {
+        const unwrappedParams = await params;
+        setEventId(unwrappedParams.eventId);
+      } catch (error) {
+        console.error('Failed to unwrap params:', error);
+        setError('Failed to load event');
+      }
+    }
+    unwrapParams();
+  }, [params]);
 
   // Fetch photos from API
   useEffect(() => {
+    if (!eventId) return;
+
     const fetchPhotos = async () => {
       try {
-        // Ganti dengan API call sebenarnya
-        const response = await fetch(`/api/events/${params.eventId}/photos`);
+        setLoading(true);
+        setError(null);
+        
+        console.log('Fetching photos for event:', eventId);
+        const response = await fetch(`/api/events/${eventId}/photos`);
+        
+        if (!response.ok) {
+          throw new Error(`Failed to fetch photos: ${response.status}`);
+        }
+        
         const data = await response.json();
+        
+        if (data.error) {
+          throw new Error(data.error);
+        }
+        
+        console.log('Photos data received:', data.photos);
         setPhotos(data.photos || []);
       } catch (error) {
         console.error('Failed to fetch photos:', error);
+        setError(error instanceof Error ? error.message : 'Failed to load photos');
       } finally {
         setLoading(false);
       }
     };
 
     fetchPhotos();
-  }, [params.eventId]);
+  }, [eventId]);
 
   const togglePhotoSelection = (photoId: string) => {
     setSelectedPhotos(prev => 
@@ -54,22 +87,35 @@ export default function ManagePhotos({ params }: { params: { eventId: string } }
   };
 
   const handleDelete = async () => {
+    if (!eventId) return;
+    
     try {
-      // Ganti dengan API call sebenarnya
-      await fetch('/api/photos/delete', {
+      // API untuk delete photos
+      const response = await fetch('/api/photos/delete', {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ photoIds: selectedPhotos }),
+        body: JSON.stringify({ 
+          photoIds: selectedPhotos,
+          eventId: eventId 
+        }),
       });
+
+      if (!response.ok) {
+        throw new Error('Failed to delete photos');
+      }
       
       // Remove deleted photos from state
       setPhotos(prev => prev.filter(photo => !selectedPhotos.includes(photo.id)));
       setSelectedPhotos([]);
       setDeleteConfirm(false);
+      
+      // Refresh the page to ensure data is synced
+      window.location.reload();
     } catch (error) {
       console.error('Failed to delete photos:', error);
+      alert('Gagal menghapus foto. Silakan coba lagi.');
     }
   };
 
@@ -82,16 +128,43 @@ export default function ManagePhotos({ params }: { params: { eventId: string } }
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('id-ID', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    try {
+      return new Date(dateString).toLocaleDateString('id-ID', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (error) {
+      return 'Invalid Date';
+    }
   };
 
-  if (loading) {
+  // Tampilkan error jika ada
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <svg className="mx-auto h-16 w-16 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.35 16.5c-.77.833.192 2.5 1.732 2.5z" />
+          </svg>
+          <h3 className="mt-4 text-lg font-medium text-gray-900">Terjadi Error</h3>
+          <p className="mt-2 text-gray-500">{error}</p>
+          <div className="mt-6">
+            <button
+              onClick={() => window.location.reload()}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-6 rounded-md transition duration-200"
+            >
+              Coba Lagi
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!eventId || loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -114,7 +187,7 @@ export default function ManagePhotos({ params }: { params: { eventId: string } }
               <h1 className="text-2xl font-bold">Kelola Foto Event</h1>
               <div className="flex space-x-3">
                 <button
-                  onClick={() => router.push(`/dashboard/events/${params.eventId}/upload`)}
+                  onClick={() => router.push(`/dashboard/events/${eventId}/upload`)}
                   className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md transition duration-200"
                 >
                   Upload Foto Baru
@@ -173,7 +246,7 @@ export default function ManagePhotos({ params }: { params: { eventId: string } }
               <p className="mt-2 text-gray-500">Upload foto pertama untuk event ini.</p>
               <div className="mt-6">
                 <button
-                  onClick={() => router.push(`/dashboard/events/${params.eventId}/upload`)}
+                  onClick={() => router.push(`/dashboard/events/${eventId}/upload`)}
                   className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-6 rounded-md transition duration-200"
                 >
                   Upload Foto
@@ -195,6 +268,10 @@ export default function ManagePhotos({ params }: { params: { eventId: string } }
                         src={photo.url} 
                         alt={photo.filename}
                         className="object-cover w-full h-full"
+                        onError={(e) => {
+                          // Fallback jika gambar gagal load
+                          e.currentTarget.src = '/placeholder-image.jpg';
+                        }}
                       />
                       
                       <div className="absolute top-2 left-2">
@@ -208,7 +285,9 @@ export default function ManagePhotos({ params }: { params: { eventId: string } }
                     </div>
                     
                     <div className="p-3">
-                      <p className="text-sm font-medium truncate">{photo.filename}</p>
+                      <p className="text-sm font-medium truncate" title={photo.filename}>
+                        {photo.filename}
+                      </p>
                       <div className="flex justify-between text-xs text-gray-500 mt-1">
                         <span>{formatFileSize(photo.size)}</span>
                         <span>{formatDate(photo.uploadedAt)}</span>
