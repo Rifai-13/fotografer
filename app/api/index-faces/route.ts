@@ -1,16 +1,19 @@
 // app/api/index-faces/route.ts
-import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import {
-  RekognitionClient,
+import { NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
+import { 
+  RekognitionClient, 
   IndexFacesCommand,
+  CreateCollectionCommand
 } from "@aws-sdk/client-rekognition";
 
+// Inisialisasi Supabase client (ADMIN/SERVICE ROLE)
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// Inisialisasi AWS Rekognition client
 const rekognitionClient = new RekognitionClient({
   region: process.env.AWS_REGION!,
   credentials: {
@@ -19,104 +22,109 @@ const rekognitionClient = new RekognitionClient({
   },
 });
 
+/**
+ * Fungsi helper untuk memastikan Collection di AWS ada.
+ */
+async function ensureCollectionExists(collectionId: string) {
+  try {
+    const createCommand = new CreateCollectionCommand({ CollectionId: collectionId });
+    await rekognitionClient.send(createCommand);
+    console.log(`Collection ${collectionId} created.`);
+  } catch (error: any) {
+    if (error.name === 'ResourceAlreadyExistsException') {
+      console.log(`Collection ${collectionId} already exists.`);
+    } else {
+      console.error("Error ensuring collection exists:", error);
+      throw error;
+    }
+  }
+}
+
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { eventId, photoId } = body;
+    const payload = await request.json();
 
-    if (!eventId || !photoId) {
+    // ========= LOGIKA UNTUK DETEKSI WEBHOOK =========
+    let eventId: string, photoId: string, filePath: string;
+
+    if (payload.type === 'INSERT' && payload.record) {
+      // Ini adalah payload dari Supabase Webhook
+      console.log('Processing Supabase INSERT webhook...');
+      eventId = payload.record.event_id;
+      photoId = payload.record.id;
+      filePath = payload.record.file_path;
+    } else {
+      // Ini adalah payload manual (dari /api/setup-event)
+      console.log('Processing manual API call...');
+      eventId = payload.eventId;
+      photoId = payload.photoId;
+      filePath = payload.filePath; 
+    }
+    // ================================================
+
+    if (!eventId || !photoId || !filePath) {
       return NextResponse.json(
-        { error: "Event ID dan Photo ID diperlukan" },
+        { error: 'eventId, photoId, dan filePath diperlukan' },
         { status: 400 }
       );
     }
 
-    console.log("Indexing faces for event:", eventId, "photo:", photoId);
+    const collectionId = `event-${eventId}`;
 
-    // Get photo data from database
-    const { data: photo, error: photoError } = await supabase
-      .from("photos")
-      .select("*")
-      .eq("id", photoId)
-      .single();
+    // 1. Pastikan Collection-nya ada
+    await ensureCollectionExists(collectionId);
 
-    if (photoError || !photo) {
-      console.error("Photo not found:", photoError);
-      return NextResponse.json(
-        { error: "Foto tidak ditemukan" },
-        { status: 404 }
-      );
-    }
-
-    // Download photo from storage
+    // 2. Download foto dari Supabase Storage
+    console.log(`Downloading photo: ${filePath}`);
     const { data: photoData, error: storageError } = await supabase.storage
-      .from("event-photos")
-      .download(photo.file_path);
+      .from('event-photos') // Ganti jika nama bucket-mu beda
+      .download(filePath);
 
     if (storageError) {
-      console.error("Storage error:", storageError);
-      return NextResponse.json(
-        { error: "Gagal mengunduh foto dari storage" },
-        { status: 500 }
-      );
+      console.error('Error downloading photo from Supabase:', storageError);
+      return NextResponse.json({ error: 'Gagal download foto dari storage' }, { status: 500 });
     }
 
-    if (!photoData) {
-      return NextResponse.json(
-        { error: "File foto tidak ditemukan di storage" },
-        { status: 404 }
-      );
-    }
-
-    // Convert to buffer
+    // 3. Ubah foto jadi Buffer
     const arrayBuffer = await photoData.arrayBuffer();
     const imageBytes = Buffer.from(arrayBuffer);
 
-    const collectionId = `event-${eventId}`;
-
-    console.log("Indexing faces to collection:", collectionId);
-
-    // Index faces in the photo
+    // 4. Buat Perintah "IndexFaces"
     const command = new IndexFacesCommand({
       CollectionId: collectionId,
-      Image: {
-        Bytes: imageBytes,
-      },
+      Image: { Bytes: imageBytes },
       ExternalImageId: photoId,
-      DetectionAttributes: ["DEFAULT"],
       MaxFaces: 10,
-      QualityFilter: "AUTO",
+      DetectionAttributes: ["DEFAULT"],
     });
 
     const response = await rekognitionClient.send(command);
+    const indexedFacesCount = response.FaceRecords?.length || 0;
+    console.log(`Successfully indexed ${indexedFacesCount} faces for photo ${photoId}`);
 
-    console.log("Faces indexed:", response.FaceRecords?.length);
+    // 5. Update kolom 'faces_indexed' dan 'indexed_at' di database
+    const { error: updateError } = await supabase
+      .from('photos')
+      .update({ 
+          faces_indexed: indexedFacesCount,
+          indexed_at: new Date().toISOString()
+      })
+      .eq('id', photoId);
 
-    // Update photo record with face indexing info
-    try {
-      await supabase
-        .from("photos")
-        .update({
-          faces_indexed: response.FaceRecords?.length || 0,
-          indexed_at: new Date().toISOString(),
-        })
-        .eq("id", photoId);
-    } catch (updateError) {
-      console.log(
-        "⚠️ Cannot update faces_indexed (column may not exist):",
-        updateError
-      );
+    if (updateError) {
+      console.error('Error updating photo metadata:', updateError);
     }
 
     return NextResponse.json({
       success: true,
-      facesIndexed: response.FaceRecords?.length || 0,
-      faceRecords: response.FaceRecords,
+      indexedFaces: indexedFacesCount,
+      photoId: photoId,
     });
+
   } catch (error: any) {
-    console.error("Index faces error:", error);
+    console.error('Indexing error:', error.message);
     return NextResponse.json(
-      { error: "Gagal mengindex wajah: " + error.message },
+      { error: 'Gagal mengindeks wajah: ' + error.message },
       { status: 500 }
     );
   }

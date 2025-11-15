@@ -37,8 +37,8 @@ export async function POST(request: Request) {
       const command = new SearchFacesByImageCommand({
         CollectionId: collectionId,
         Image: { Bytes: imageBytes },
-        FaceMatchThreshold: 80, // Kamu sudah turunkan, jadi pakai ini
-        MaxFaces: 100, // Tetap 100
+        FaceMatchThreshold: 90,
+        MaxFaces: 100,
       });
 
       const response = await rekognitionClient.send(command);
@@ -108,16 +108,16 @@ export async function POST(request: Request) {
 
         return {
           photo_id: photo.id,
-          image_url: photo.image_url, // <-- Dapatkan langsung dari Supabase
+          image_url: photo.image_url,
           similarity: matchData.similarity,
           bounding_box: matchData.boundingBox,
           face_id: matchData.faceId,
           confidence: response.SearchedFaceConfidence,
         };
-      }).filter(Boolean); // Hapus null entries jika ada (dari `return null` di atas)
+      }).filter(Boolean);
       
       // Sort matches by similarity (highest first)
-      finalMatches.sort((a, b) => b!.similarity - a!.similarity); // Tambah ! untuk memastikan bukan null
+      finalMatches.sort((a, b) => b!.similarity - a!.similarity);
 
       console.log(`Found ${finalMatches.length} final matches after merging and filtering.`);
 

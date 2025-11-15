@@ -108,7 +108,7 @@ export async function setupEventCollection(eventId: string) {
             body: JSON.stringify({
               eventId,
               photoId: photo.id,
-              // filePath: photo.file_path // Kirim ini jika /api/index-faces butuh
+              filePath: photo.file_path // Kirim ini jika /api/index-faces butuh
             }),
           });
 

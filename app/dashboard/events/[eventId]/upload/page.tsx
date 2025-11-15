@@ -13,6 +13,14 @@ export default function UploadPhotos({
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number[]>([]);
+  const [uploadResults, setUploadResults] = useState<
+    Array<{
+      fileName: string;
+      success: boolean;
+      facesIndexed?: number;
+      message?: string;
+    }>
+  >([]);
   const [eventId, setEventId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
@@ -35,6 +43,7 @@ export default function UploadPhotos({
         ...prev,
         ...Array(filesArray.length).fill(0),
       ]);
+      setUploadResults([]); // Reset results ketika file baru dipilih
     }
   };
 
@@ -42,72 +51,83 @@ export default function UploadPhotos({
     if (selectedFiles.length === 0 || !eventId) return;
 
     setUploading(true);
+    setUploadResults([]);
 
     try {
-      // Upload semua file secara paralel dengan progress tracking manual
-      const uploadPromises = selectedFiles.map(async (file, index) => {
-        // Generate unique file path
-        const fileExt = file.name.split(".").pop();
-        const fileName = `${Date.now()}-${Math.random()
-          .toString(36)
-          .substring(2)}.${fileExt}`;
-        const filePath = `${eventId}/${fileName}`;
+      const results = [];
 
-        // Simulasi progress (karena Supabase tidak menyediakan onUploadProgress)
-        const simulateProgress = () => {
-          let progress = 0;
-          const interval = setInterval(() => {
-            progress += Math.random() * 15;
-            if (progress >= 90) {
-              clearInterval(interval);
-            } else {
-              setUploadProgress((prev) => {
-                const newProgress = [...prev];
-                newProgress[index] = Math.min(progress, 90);
-                return newProgress;
-              });
-            }
-          }, 200);
-          return interval;
-        };
-
-        const progressInterval = simulateProgress();
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i];
 
         try {
-          // Upload ke Supabase Storage
-          const { data: uploadData, error: uploadError } =
-            await supabase.storage
-              .from("event-photos") // Sesuai dengan nama bucket Anda
-              .upload(filePath, file);
+          console.log(
+            `🔄 Uploading ${i + 1}/${selectedFiles.length}: ${file.name}`
+          );
 
-          if (uploadError) {
-            console.error(`Upload error for ${file.name}:`, uploadError);
-            throw new Error(
-              `Failed to upload ${file.name}: ${uploadError.message}`
-            );
-          }
-
-          // Set progress to 100% setelah upload berhasil
+          // Update progress
           setUploadProgress((prev) => {
             const newProgress = [...prev];
-            newProgress[index] = 100;
+            newProgress[i] = 10;
             return newProgress;
           });
 
-          // Dapatkan URL public untuk file yang diupload
+          // ✅ CONVERT FILE TO BASE64 UNTUK REKOGNITION
+          const imageBytes = await convertFileToBase64(file);
+
+          // Update progress
+          setUploadProgress((prev) => {
+            const newProgress = [...prev];
+            newProgress[i] = 30;
+            return newProgress;
+          });
+
+          // Generate unique file path
+          const fileExt = file.name.split(".").pop();
+          const fileName = `${Date.now()}-${Math.random()
+            .toString(36)
+            .substring(2)}.${fileExt}`;
+          const filePath = `${eventId}/${fileName}`;
+
+          // Upload ke Supabase Storage
+          const { data: uploadData, error: uploadError } =
+            await supabase.storage.from("event-photos").upload(filePath, file);
+
+          if (uploadError) {
+            throw new Error(`Upload gagal: ${uploadError.message}`);
+          }
+
+          // Update progress
+          setUploadProgress((prev) => {
+            const newProgress = [...prev];
+            newProgress[i] = 60;
+            return newProgress;
+          });
+
+          // Dapatkan URL public
           const { data: urlData } = supabase.storage
             .from("event-photos")
             .getPublicUrl(filePath);
 
           if (!urlData.publicUrl) {
-            throw new Error(`Failed to get public URL for ${file.name}`);
+            throw new Error("Gagal mendapatkan URL public");
           }
 
           // Dapatkan session untuk photographer_id
           const session = await supabase.auth.getSession();
           const photographerId = session.data.session?.user.id;
 
-          // Catat foto ke database melalui API route
+          if (!photographerId) {
+            throw new Error("Photographer tidak terautentikasi");
+          }
+
+          // Update progress
+          setUploadProgress((prev) => {
+            const newProgress = [...prev];
+            newProgress[i] = 80;
+            return newProgress;
+          });
+
+          // ✅ REGISTER PHOTO DENGAN IMAGE_BYTES
           const registerResponse = await fetch("/api/register-photo", {
             method: "POST",
             headers: {
@@ -120,38 +140,67 @@ export default function UploadPhotos({
               file_size: file.size,
               event_id: eventId,
               photographer_id: photographerId,
+              image_bytes: imageBytes, // ✅ KIRIM BASE64 UNTUK REKOGNITION
             }),
           });
 
+          const registerResult = await registerResponse.json();
+
           if (!registerResponse.ok) {
-            const errorData = await registerResponse.json();
-            throw new Error(
-              `Failed to register photo ${file.name}: ${errorData.error}`
-            );
+            throw new Error(registerResult.error || "Gagal register photo");
           }
 
-          return {
+          // Update progress to 100%
+          setUploadProgress((prev) => {
+            const newProgress = [...prev];
+            newProgress[i] = 100;
+            return newProgress;
+          });
+
+          // Simpan hasil
+          results.push({
             fileName: file.name,
             success: true,
-            publicUrl: urlData.publicUrl,
-          };
-        } catch (error) {
-          clearInterval(progressInterval);
-          throw error;
+            facesIndexed: registerResult.rekognition?.facesIndexed || 0,
+            message: registerResult.rekognition?.message || "Upload berhasil",
+          });
+
+          console.log(`✅ Upload berhasil: ${file.name}`, registerResult);
+        } catch (error: any) {
+          console.error(`❌ Upload gagal untuk ${file.name}:`, error);
+          results.push({
+            fileName: file.name,
+            success: false,
+            message: error.message,
+          });
         }
-      });
+      }
 
-      // Tunggu semua upload selesai
-      const results = await Promise.all(uploadPromises);
+      setUploadResults(results);
 
-      console.log("All uploads completed:", results);
+      // Tampilkan summary
+      const successfulUploads = results.filter((r) => r.success);
+      const totalFaces = results.reduce(
+        (sum, r) => sum + (r.facesIndexed || 0),
+        0
+      );
 
-      // Redirect ke halaman kelola setelah semua upload selesai
-      setTimeout(() => {
-        router.push(`/dashboard/events/${eventId}/manage`);
-      }, 1000);
+      if (successfulUploads.length > 0) {
+        alert(
+          `✅ ${successfulUploads.length}/${selectedFiles.length} foto berhasil diupload\n👤 ${totalFaces} wajah terdaftar ke AI`
+        );
+      } else {
+        alert("❌ Semua upload gagal");
+      }
+
+      // Redirect setelah 2 detik jika ada yang berhasil
+      if (successfulUploads.length > 0) {
+        setTimeout(() => {
+          router.push(`/dashboard/events/${eventId}/manage`);
+        }, 2000);
+      }
     } catch (error) {
-      console.error("Upload failed:", error);
+      console.error("Upload process failed:", error);
       alert(
         `Upload gagal: ${
           error instanceof Error ? error.message : "Unknown error"
@@ -162,9 +211,25 @@ export default function UploadPhotos({
     }
   };
 
+  // Helper function: Convert file to base64
+  const convertFileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const base64 = e.target?.result as string;
+        // Remove data:image/jpeg;base64, prefix
+        const base64Data = base64.replace(/^data:image\/\w+;base64,/, "");
+        resolve(base64Data);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
   const removeFile = (index: number) => {
     setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
     setUploadProgress((prev) => prev.filter((_, i) => i !== index));
+    setUploadResults([]);
   };
 
   const triggerFileInput = () => {
@@ -216,6 +281,7 @@ export default function UploadPhotos({
             </button>
           </div>
 
+          {/* Upload Area */}
           <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center mb-6">
             <input
               type="file"
@@ -251,12 +317,47 @@ export default function UploadPhotos({
 
             <button
               onClick={triggerFileInput}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-6 rounded-md transition duration-200"
+              disabled={uploading}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-6 rounded-md transition duration-200 disabled:opacity-50"
             >
               Pilih File
             </button>
           </div>
 
+          {/* Upload Results */}
+          {uploadResults.length > 0 && (
+            <div className="mb-6 bg-gray-50 rounded-lg p-4">
+              <h3 className="font-semibold mb-2">Hasil Upload:</h3>
+              <div className="space-y-2">
+                {uploadResults.map((result, index) => (
+                  <div
+                    key={index}
+                    className={`flex justify-between items-center p-2 rounded ${
+                      result.success
+                        ? "bg-green-50 text-green-800"
+                        : "bg-red-50 text-red-800"
+                    }`}
+                  >
+                    <span className="text-sm">{result.fileName}</span>
+                    <div className="text-xs">
+                      {result.success ? (
+                        <span>
+                          ✅{" "}
+                          {result.facesIndexed
+                            ? `${result.facesIndexed} wajah`
+                            : "Tidak ada wajah"}
+                        </span>
+                      ) : (
+                        <span>❌ Gagal</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Selected Files */}
           {selectedFiles.length > 0 && (
             <div className="mb-6">
               <h2 className="text-xl font-semibold mb-4">
@@ -308,7 +409,10 @@ export default function UploadPhotos({
 
               <div className="mt-6 flex justify-end space-x-3">
                 <button
-                  onClick={() => setSelectedFiles([])}
+                  onClick={() => {
+                    setSelectedFiles([]);
+                    setUploadResults([]);
+                  }}
                   disabled={uploading}
                   className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
