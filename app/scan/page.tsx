@@ -501,7 +501,7 @@ export default function ScanPage() {
 
           {/* Camera Section */}
           {events.length > 0 && selectedEvent && (
-            <div className="bg-white rounded-xl border border-gray-200 p-6 mb-8">
+            <div className="bg-white rounded-xl border border-gray-200 p-4 sm:p-6 mb-8">
               <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
                 <svg
                   className="w-5 h-5 text-gray-400 mr-2"
@@ -620,10 +620,10 @@ export default function ScanPage() {
                       </div>
                     ) : (
                       <>
-                        <div className="flex space-x-4">
+                        <div className="flex items-center space-x-3 sm:space-x-4">
                           <button
                             onClick={cancelCamera}
-                            className="bg-gray-500 hover:bg-gray-600 text-white font-medium py-2 px-6 rounded-lg transition duration-200 flex items-center space-x-2"
+                            className="bg-gray-500 hover:bg-gray-600 text-white font-medium py-2 px-4 text-sm sm:px-6 sm:text-base rounded-lg transition duration-200 flex items-center space-x-2"
                           >
                             <svg
                               className="w-5 h-5"
@@ -643,9 +643,9 @@ export default function ScanPage() {
 
                           <button
                             onClick={captureImage}
-                            className="bg-white hover:bg-gray-100 border-2 border-red-500 text-red-500 font-bold w-16 h-16 rounded-full text-lg transition duration-200 flex items-center justify-center shadow-lg hover:shadow-xl transform hover:scale-105"
+                            className="bg-white hover:bg-gray-100 border-2 border-red-500 text-red-500 font-bold w-8 h-8 sm:w-12 sm:h-12 rounded-full text-lg transition duration-200 flex items-center justify-center shadow-lg hover:shadow-xl transform hover:scale-105"
                           >
-                            <div className="w-12 h-12 bg-red-500 rounded-full"></div>
+                            <div className="w-8 h-8 sm:w-12 sm:h-12 bg-red-500 rounded-full"></div>
                           </button>
                         </div>
                         <p className="text-gray-600 text-sm">
