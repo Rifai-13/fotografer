@@ -132,15 +132,16 @@ export async function POST(request: Request) {
       if (awsError.name === 'ResourceNotFoundException') {
         return NextResponse.json(
           { 
-            error: 'Collection untuk event ini belum dibuat atau kosong',
-            code: 'COLLECTION_NOT_FOUND',
+            status: "NO_COLLECTION",
+            message: "Collection untuk event ini belum dibuat atau kosong",
+            // code: 'COLLECTION_NOT_FOUND',
             matches: [] 
           },
-          { status: 404 }
+          { status: 200 }
         );
       }
       console.error('AWS Rekognition service error:', awsError.message);
-      throw awsError; // Dilempar lagi ke catch terluar
+      throw awsError;
     }
 
   } catch (error: any) {

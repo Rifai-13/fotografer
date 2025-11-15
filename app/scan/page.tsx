@@ -183,6 +183,13 @@ export default function ScanPage() {
         throw new Error(result.error || "Gagal mencari wajah");
       }
 
+      if (result.status === "NO_COLLECTION") {
+        console.warn("⚠️ Collection not found for this event:", result.message);
+        setError("Belum ada foto yang di-upload untuk event ini. Silakan hubungi fotografer.");
+        setSearching(false);
+        return;
+      }
+
       console.log("✅ Search results:", result);
 
       // Redirect to results page
@@ -202,9 +209,6 @@ export default function ScanPage() {
       setSearching(false);
     }
   };
-
-  // --- BAGIAN useEffect ---
-  // SEMUA useEffect DI BAWAH DEFINISI FUNGSI
 
   useEffect(() => {
     loadPublicEvents();
