@@ -185,7 +185,9 @@ export default function ScanPage() {
 
       if (result.status === "NO_COLLECTION") {
         console.warn("⚠️ Collection not found for this event:", result.message);
-        setError("Belum ada foto yang di-upload untuk event ini. Silakan hubungi fotografer.");
+        setError(
+          "Belum ada foto yang di-upload untuk event ini. Silakan hubungi fotografer."
+        );
         setSearching(false);
         return;
       }
@@ -227,7 +229,6 @@ export default function ScanPage() {
   useEffect(() => {
     // Hanya jalankan jika cameraActive=true
     if (cameraActive) {
-      
       const activateCamera = async () => {
         try {
           console.log("🔄 Starting camera (triggered by useEffect)...");
@@ -474,13 +475,19 @@ export default function ScanPage() {
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                     {/* Menggunakan 'eventItem' di find */}
                     <h4 className="font-semibold text-blue-900 mb-2">
-                      {events.find((eventItem) => eventItem.id === selectedEvent)?.name}
+                      {
+                        events.find(
+                          (eventItem) => eventItem.id === selectedEvent
+                        )?.name
+                      }
                     </h4>
                     <div className="text-sm text-blue-700 space-y-1">
                       <p>
                         📅{" "}
                         {new Date(
-                          events.find((eventItem) => eventItem.id === selectedEvent)?.date || ""
+                          events.find(
+                            (eventItem) => eventItem.id === selectedEvent
+                          )?.date || ""
                         ).toLocaleDateString("id-ID", {
                           weekday: "long",
                           year: "numeric",
@@ -490,7 +497,11 @@ export default function ScanPage() {
                       </p>
                       <p>
                         📍{" "}
-                        {events.find((eventItem) => eventItem.id === selectedEvent)?.location}
+                        {
+                          events.find(
+                            (eventItem) => eventItem.id === selectedEvent
+                          )?.location
+                        }
                       </p>
                     </div>
                   </div>
@@ -669,13 +680,13 @@ export default function ScanPage() {
                     <div className="absolute inset-0 border-4 border-white/30 rounded-2xl pointer-events-none"></div>
                   </div>
 
-                  <div className="flex justify-center space-x-4">
+                  <div className="flex justify-center space-x-3 sm:space-x-4">
                     <button
                       onClick={retakePhoto}
-                      className="bg-gray-500 hover:bg-gray-600 text-white font-medium py-3 px-6 rounded-xl transition duration-200 flex items-center space-x-2"
+                      className="bg-gray-500 hover:bg-gray-600 text-white font-medium py-2 px-4 text-sm rounded-lg transition duration-200 flex items-center space-x-2 sm:py-3 sm:px-6 sm:text-base sm:rounded-xl"
                     >
                       <svg
-                        className="w-5 h-5"
+                        className="w-4 h-4 sm:w-5 sm:h-5"
                         fill="none"
                         stroke="currentColor"
                         viewBox="0 0 24 24"
@@ -693,7 +704,7 @@ export default function ScanPage() {
                     <button
                       onClick={searchFaces}
                       disabled={searching}
-                      className="bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white font-bold py-3 px-6 rounded-xl transition duration-200 flex items-center space-x-2"
+                      className="bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white font-bold py-2 px-4 text-sm rounded-lg whitespace-nowrap transition duration-200 flex items-center space-x-2 sm:py-3 sm:px-6 sm:text-base sm:rounded-xl"
                     >
                       {searching ? (
                         <>
@@ -703,7 +714,7 @@ export default function ScanPage() {
                       ) : (
                         <>
                           <svg
-                            className="w-5 h-5"
+                            className="w-4 h-4 sm:w-5 sm:h-5"
                             fill="none"
                             stroke="currentColor"
                             viewBox="0 0 24 24"
