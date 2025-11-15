@@ -1,481 +1,705 @@
+// app/scan/page.tsx - VERSI LENGKAP DAN KONSISTEN
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { createClient } from "@/lib/supabase/client";
-import { toast } from "sonner";
 
-// Type untuk event
-interface Event {
+// Menggunakan nama interface EventItem secara konsisten
+interface EventItem {
   id: string;
   name: string;
+  description: string;
   date: string;
   location: string;
-  photo_count: number;
   status: string;
-  created_at: string;
-  actual_photo_count: number;
 }
 
 export default function ScanPage() {
-  const [isCameraOpen, setIsCameraOpen] = useState(false);
-  const [isCaptured, setIsCaptured] = useState(false);
-  const [capturedImage, setCapturedImage] = useState<string>("");
+  // Menggunakan EventItem[]
+  const [events, setEvents] = useState<EventItem[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<string>("");
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const [events, setEvents] = useState<Event[]>([]);
-  const [isLoadingEvents, setIsLoadingEvents] = useState(true);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [cameraLoading, setCameraLoading] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const router = useRouter();
   const supabase = createClient();
-  const [setupStatus, setSetupStatus] = useState<
-    "idle" | "setting_up" | "ready" | "error"
-  >("idle");
 
-  // Load events yang tersedia untuk public
-  useEffect(() => {
-    const loadPublicEvents = async () => {
-      try {
-        setIsLoadingEvents(true);
+  // --- BAGIAN DEFINISI FUNGSI ---
+  // SEMUA FUNGSI DIPINDAH KE ATAS SEBELUM useEffect
 
-        // Fetch semua event yang memiliki foto (public access)
-        const { data: eventsData, error: eventsError } = await supabase
-          .from("events")
-          .select(
-            `
-            *,
-            photos:photos(count)
-          `
-          )
-          .eq("status", "active")
-          .order("created_at", { ascending: false });
+  const loadPublicEvents = async () => {
+    try {
+      setLoading(true);
+      setError(null);
 
-        if (eventsError) {
-          console.error("Error fetching events:", eventsError);
-          await fetchEventsWithFallback();
-          return;
-        }
+      const { data: eventsData, error: eventsError } = await supabase
+        .from("events")
+        .select("id, name, description, date, location, status")
+        .eq("status", "active")
+        .order("created_at", { ascending: false });
 
-        // Transform data untuk mendapatkan actual_photo_count
-        const transformedEvents = (eventsData || []).map((event: any) => ({
-          id: event.id,
-          name: event.name,
-          date: event.date,
-          location: event.location,
-          photo_count: event.photo_count,
-          status: event.status,
-          created_at: event.created_at,
-          actual_photo_count: event.photos?.[0]?.count || 0,
-        }));
-
-        // Filter hanya event yang memiliki foto
-        const eventsWithPhotos = transformedEvents.filter(
-          (event: Event) => event.actual_photo_count > 0
-        );
-
-        setEvents(eventsWithPhotos);
-
-        // Auto-select first event dengan foto
-        if (eventsWithPhotos.length > 0) {
-          setSelectedEvent(eventsWithPhotos[0].id);
-        }
-      } catch (error) {
-        console.error("Unexpected error:", error);
-        toast.error("Terjadi kesalahan saat memuat event");
-      } finally {
-        setIsLoadingEvents(false);
+      if (eventsError) {
+        console.error("❌ Error fetching events:", eventsError);
+        setError(`Gagal memuat events: ${eventsError.message}`);
+        return;
       }
-    };
 
-    const fetchEventsWithFallback = async () => {
-      try {
-        const { data: eventsData, error: eventsError } = await supabase
-          .from("events")
-          .select("*")
-          .eq("status", "active")
-          .order("created_at", { ascending: false });
+      setEvents(eventsData || []);
 
-        if (eventsError) {
-          throw eventsError;
-        }
-
-        const eventsWithCounts = await Promise.all(
-          (eventsData || []).map(async (event: Event) => {
-            const { count } = await supabase
-              .from("photos")
-              .select("*", { count: "exact", head: true })
-              .eq("event_id", event.id);
-
-            return {
-              ...event,
-              actual_photo_count: count || 0,
-            };
-          })
-        );
-
-        const eventsWithPhotos = eventsWithCounts.filter(
-          (event: Event) => event.actual_photo_count > 0
-        );
-        setEvents(eventsWithPhotos);
-
-        if (eventsWithPhotos.length > 0) {
-          setSelectedEvent(eventsWithPhotos[0].id);
-        }
-      } catch (error) {
-        console.error("Fallback also failed:", error);
-        toast.error("Gagal memuat event");
-        setEvents([]);
+      if (eventsData && eventsData.length > 0) {
+        setSelectedEvent(eventsData[0].id);
       }
-    };
+    } catch (err: any) {
+      console.error("❌ Exception in loadPublicEvents:", err);
+      setError("Terjadi kesalahan saat memuat events: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    loadPublicEvents();
-  }, [supabase]);
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => {
+        track.stop();
+      });
+      streamRef.current = null;
+    }
+    setCameraActive(false);
+    setCameraLoading(false);
+  }, [setCameraActive, setCameraLoading]);
 
-  // Cleanup stream ketika komponen unmount
-  useEffect(() => {
-    return () => {
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
-      }
-    };
-  }, [stream]);
-
-  const openCamera = async () => {
+  const startCamera = () => {
     if (!selectedEvent) {
-      toast.error("Silakan pilih event terlebih dahulu!");
+      setError("Silakan pilih event terlebih dahulu");
       return;
     }
 
     try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-      });
+      setError(null);
+      setCameraLoading(true);
 
-      setStream(mediaStream);
-      setIsCameraOpen(true);
-      setIsCaptured(false);
-      setCapturedImage("");
-    } catch (error) {
-      console.error("Error accessing camera:", error);
-      toast.error(
-        "Tidak dapat mengakses kamera. Pastikan Anda memberikan izin akses kamera."
-      );
+      // Stop stream lama JIKA ADA sebelum mengaktifkan yang baru
+      if (streamRef.current) {
+        stopCamera();
+      }
+
+      // Ini akan memicu re-render DAN useEffect di bawah
+      setCameraActive(true);
+    } catch (err: any) {
+      setError("Gagal memulai kamera: " + err.message);
+      setCameraLoading(false);
     }
   };
 
-  useEffect(() => {
-    if (isCameraOpen && videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
-    }
-  }, [isCameraOpen, stream]);
-
   const captureImage = () => {
-    if (videoRef.current && canvasRef.current) {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      const context = canvas.getContext("2d");
+    if (!videoRef.current || !canvasRef.current) {
+      setError("Kamera tidak siap");
+      return;
+    }
 
-      // Set canvas size sesuai video
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      setError("Canvas context tidak tersedia");
+      return;
+    }
+
+    try {
+      console.log("📸 Capturing image...");
+
+      // Set canvas size to match video
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
 
-      // Gambar frame video ke canvas
-      context?.drawImage(video, 0, 0, canvas.width, canvas.height);
+      // Draw current video frame to canvas (dengan mirror effect untuk selfie)
+      context.translate(canvas.width, 0);
+      context.scale(-1, 1);
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Convert canvas ke data URL untuk ditampilkan
+      // Reset transform
+      context.setTransform(1, 0, 0, 1, 0, 0);
+
+      // Convert to data URL
       const imageDataUrl = canvas.toDataURL("image/jpeg", 0.8);
       setCapturedImage(imageDataUrl);
 
-      // Stop kamera
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
-        setStream(null);
-      }
+      console.log("✅ Image captured successfully");
 
-      setIsCaptured(true);
-      setIsCameraOpen(false);
-
-      console.log("Foto berhasil diambil dan ditampilkan");
+      // Stop camera after capture
+      stopCamera();
+    } catch (err: any) {
+      console.error("Error capturing image:", err);
+      setError("Gagal mengambil foto: " + err.message);
     }
   };
 
   const retakePhoto = () => {
-    setIsCaptured(false);
-    setCapturedImage("");
-    openCamera();
+    setCapturedImage(null);
+    startCamera();
+  };
+
+  const cancelCamera = () => {
+    stopCamera();
+    setCapturedImage(null);
   };
 
   const searchFaces = async () => {
-    if (!selectedEvent || !capturedImage) {
-      toast.error("Silakan ambil foto terlebih dahulu");
+    if (!capturedImage || !selectedEvent) {
+      setError("Tidak ada foto yang diambil atau event tidak dipilih");
       return;
     }
 
-    setIsProcessing(true);
-    setSetupStatus("idle");
-
     try {
-      // Extract base64 data dari data URL
-      const imageData = capturedImage.split(",")[1];
+      setSearching(true);
+      setError(null);
 
-      // Step 1: Coba search faces
-      const searchResponse = await fetch("/api/search-faces", {
+      // Convert data URL to base64 string
+      const base64Data = capturedImage.split(",")[1];
+
+      // Call search faces API
+      const response = await fetch("/api/search-faces", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           eventId: selectedEvent,
-          image: imageData,
-          imageType: "JPEG",
+          image: base64Data,
         }),
       });
 
-      const searchResult = await searchResponse.json();
+      const result = await response.json();
 
-      // Step 2: Jika collection belum ada, buat terlebih dahulu
-      if (!searchResponse.ok && searchResult.code === "COLLECTION_NOT_FOUND") {
-        setSetupStatus("setting_up");
-        toast.loading("Mempersiapkan database wajah untuk event ini...");
-
-        // Setup collection untuk event ini
-        const setupResponse = await fetch(
-          `/api/events/${selectedEvent}/setup-collection`,
-          {
-            method: "POST",
-          }
-        );
-
-        const setupResult = await setupResponse.json();
-
-        if (!setupResponse.ok) {
-          setSetupStatus("error");
-          toast.error("Gagal mempersiapkan system: " + setupResult.error);
-          return;
-        }
-
-        setSetupStatus("ready");
-        toast.success("Database wajah siap! Melanjutkan pencarian...");
-
-        // Beri waktu sebentar untuk system stabil
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-
-        // Step 3: Coba search lagi setelah setup
-        const retryResponse = await fetch("/api/search-faces", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            eventId: selectedEvent,
-            image: imageData,
-            imageType: "JPEG",
-          }),
-        });
-
-        const retryResult = await retryResponse.json();
-
-        if (!retryResponse.ok) {
-          throw new Error(
-            retryResult.error || "Gagal memproses gambar setelah setup"
-          );
-        }
-
-        // Handle hasil pencarian
-        handleSearchResult(retryResult);
-      } else if (!searchResponse.ok) {
-        throw new Error(searchResult.error || "Gagal memproses gambar");
-      } else {
-        // Langsung berhasil tanpa perlu setup
-        handleSearchResult(searchResult);
+      if (!response.ok) {
+        throw new Error(result.error || "Gagal mencari wajah");
       }
-    } catch (error) {
-      console.error("Search error:", error);
-      setSetupStatus("error");
-      toast.error("Gagal mencari foto. Silakan coba lagi.");
+
+      console.log("✅ Search results:", result);
+
+      // Redirect to results page
+      if (result.matches && result.matches.length > 0) {
+        router.push(
+          `/results?eventId=${selectedEvent}&matches=${encodeURIComponent(
+            JSON.stringify(result.matches)
+          )}`
+        );
+      } else {
+        router.push(`/results?eventId=${selectedEvent}&matches=[]`);
+      }
+    } catch (err: any) {
+      console.error("❌ Search faces error:", err);
+      setError("Gagal mencari foto: " + err.message);
     } finally {
-      setIsProcessing(false);
+      setSearching(false);
     }
   };
 
-  // Fungsi terpisah untuk handle hasil pencarian
-  const handleSearchResult = (result: any) => {
-    if (result.matches && result.matches.length > 0) {
-      toast.success(`Ditemukan ${result.matches.length} foto yang cocok!`);
-      router.push(
-        `/results?event=${selectedEvent}&matches=${encodeURIComponent(
-          JSON.stringify(result.matches)
-        )}`
-      );
-    } else {
-      toast.warning(
-        "Tidak ditemukan foto yang cocok. Coba foto dengan pencahayaan yang lebih baik."
-      );
+  // --- BAGIAN useEffect ---
+  // SEMUA useEffect DI BAWAH DEFINISI FUNGSI
+
+  useEffect(() => {
+    loadPublicEvents();
+  }, []);
+
+  // Cleanup camera on unmount
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, []);
+
+  // Efek untuk mengaktifkan kamera SETELAH videoRef siap
+  useEffect(() => {
+    // Hanya jalankan jika cameraActive=true
+    if (cameraActive) {
+      
+      const activateCamera = async () => {
+        try {
+          console.log("🔄 Starting camera (triggered by useEffect)...");
+
+          const constraints = {
+            video: {
+              facingMode: "user", // Kamera depan
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+            audio: false,
+          };
+
+          console.log("🎯 Requesting camera access...");
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
+          console.log("✅ Camera access granted");
+
+          streamRef.current = stream;
+
+          // --- INI PERBAIKANNYA ---
+          // Kita cek videoRef.current TEPAT SEBELUM DIGUNAKAN
+          const video = videoRef.current;
+          if (!video) {
+            console.error("❌ Video ref not attached when stream was ready");
+            setError("Elemen video tidak siap saat kamera aktif.");
+            setCameraLoading(false);
+            setCameraActive(false);
+            return; // Stop jika elemen video tidak ada
+          }
+          // -------------------------
+
+          // Di sini, TypeScript sudah 100% yakin 'video' tidak null
+          video.srcObject = stream;
+
+          video.onloadedmetadata = () => {
+            console.log("🎬 Video metadata loaded");
+            video
+              .play()
+              .then(() => {
+                console.log("▶️ Video started playing");
+                setCameraLoading(false);
+              })
+              .catch((playError) => {
+                console.error("❌ Error playing video:", playError);
+                setError("Gagal memulai kamera: " + playError.message);
+                setCameraLoading(false);
+                setCameraActive(false);
+              });
+          };
+
+          video.onerror = () => {
+            console.error("❌ Video error");
+            setError("Error pada video stream");
+            setCameraLoading(false);
+            setCameraActive(false);
+          };
+        } catch (err: any) {
+          console.error("❌ Camera access error:", err);
+          setCameraLoading(false);
+          setCameraActive(false);
+
+          if (err.name === "NotAllowedError") {
+            setError(
+              "Akses kamera ditolak. Silakan izinkan akses kamera untuk melanjutkan."
+            );
+          } else if (err.name === "NotFoundError") {
+            setError("Kamera tidak ditemukan di perangkat ini.");
+          } else if (err.name === "NotSupportedError") {
+            setError("Browser tidak mendukung akses kamera.");
+          } else {
+            setError("Gagal mengakses kamera: " + err.message);
+          }
+        }
+      };
+
+      activateCamera();
     }
-  };
-
-  const getSelectedEventData = (): Event | undefined => {
-    return events.find((event: Event) => event.id === selectedEvent);
-  };
-
-  const formatPhotoCount = (count: number): string => {
-    return count.toLocaleString("id-ID");
-  };
-
-  const formatDate = (dateString: string): string => {
-    return new Date(dateString).toLocaleDateString("id-ID", {
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-    });
-  };
+  }, [cameraActive, stopCamera]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30 py-8">
-      <div className="container mx-auto px-4 sm:px-6">
-        {/* Header */}
-        <header className="flex justify-between items-center mb-8">
-          <Link href="/" className="flex items-center space-x-2">
-            <div className="text-2xl">📸</div>
-            <span className="text-2xl font-bold text-gray-900">
-              Foto<span className="text-blue-600">AI</span>
-            </span>
-          </Link>
-        </header>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+      {/* Header */}
+      <div className="bg-white/80 backdrop-blur-sm border-b border-gray-200/60">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center py-4">
+            <div className="flex items-center space-x-3">
+              <div className="bg-gradient-to-r from-green-500 to-green-600 p-2 rounded-lg">
+                <svg
+                  className="w-6 h-6 text-white"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"
+                  />
+                </svg>
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">
+                  Cari Foto Anda
+                </h1>
+                <p className="text-sm text-gray-600">
+                  Temukan foto-foto Anda di event
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => router.push("/")}
+              className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2 px-4 rounded-lg transition duration-200 flex items-center space-x-2"
+            >
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M10 19l-7-7m0 0l7-7m-7 7h18"
+                />
+              </svg>
+              <span>Kembali</span>
+            </button>
+          </div>
+        </div>
+      </div>
 
-        <div className="max-w-2xl mx-auto">
-          <Card className="border-0 shadow-lg">
-            <CardHeader className="text-center space-y-1 pb-6">
-              <CardTitle className="text-2xl font-bold text-gray-900">
-                Cari Foto Anda dengan AI
-              </CardTitle>
-              <CardDescription className="text-gray-600">
-                Gunakan teknologi face recognition untuk menemukan foto-foto
-                Anda di event
-              </CardDescription>
-            </CardHeader>
+      {/* Main Content */}
+      <div className="max-w-4xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+        <div className="bg-white/60 backdrop-blur-sm rounded-2xl p-8 border border-white/80 shadow-sm">
+          {/* Error Display */}
+          {error && (
+            <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
+              <div className="flex items-center">
+                <svg
+                  className="w-5 h-5 text-red-400 mr-2"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                <p className="text-red-700">{error}</p>
+              </div>
+            </div>
+          )}
 
-            <CardContent className="space-y-6">
-              {/* Event Selection */}
-              <div className="space-y-3">
-                <label className="text-sm font-medium text-gray-700">
-                  Pilih Event *
-                </label>
-                {isLoadingEvents ? (
-                  <div className="flex items-center space-x-2 text-gray-500">
-                    <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                    <span>Memuat event yang tersedia...</span>
-                  </div>
-                ) : events.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500">
-                    <div className="text-4xl mb-4">📷</div>
-                    <p className="mb-2">
-                      Belum ada event dengan foto yang tersedia
-                    </p>
-                    <p className="text-sm mb-4">Silakan coba lagi nanti</p>
-                  </div>
-                ) : (
-                  <Select
-                    value={selectedEvent}
-                    onValueChange={setSelectedEvent}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Pilih event yang ingin Anda cari fotonya" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {events.map((event: Event) => (
-                        <SelectItem key={event.id} value={event.id}>
-                          <div className="flex flex-col">
-                            <span className="font-medium">{event.name}</span>
-                            <span className="text-sm text-gray-500">
-                              {formatDate(event.date)} •{" "}
-                              {formatPhotoCount(event.actual_photo_count)} foto
-                            </span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
+          {/* Welcome Section */}
+          <div className="text-center mb-8">
+            <div className="bg-gradient-to-r from-green-500 to-blue-500 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg
+                className="w-10 h-10 text-white"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"
+                />
+              </svg>
+            </div>
+            <h2 className="text-3xl font-bold text-gray-900 mb-2">
+              Temukan Foto Anda
+            </h2>
+            <p className="text-gray-600 text-lg max-w-2xl mx-auto">
+              Pilih event dan ambil selfie untuk menemukan semua foto Anda yang
+              diambil oleh fotografer
+            </p>
+          </div>
 
-                {selectedEvent && getSelectedEventData() && (
-                  <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h4 className="font-semibold text-blue-900 text-sm">
-                          {getSelectedEventData()?.name}
-                        </h4>
-                        <p className="text-blue-700 text-xs mt-1">
-                          📅 {formatDate(getSelectedEventData()?.date || "")} •
-                          📍 {getSelectedEventData()?.location}
-                        </p>
-                        <p className="text-blue-700 text-xs">
-                          📷{" "}
-                          {formatPhotoCount(
-                            getSelectedEventData()?.actual_photo_count || 0
-                          )}{" "}
-                          foto tersedia
-                        </p>
+          {/* Event Selection */}
+          <div className="bg-white rounded-xl border border-gray-200 p-6 mb-8">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+              <svg
+                className="w-5 h-5 text-gray-400 mr-2"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                />
+              </svg>
+              Pilih Event
+            </h3>
 
-                        {/* Status indicator */}
-                        {setupStatus === "setting_up" && (
-                          <p className="text-orange-600 text-xs mt-1 flex items-center">
-                            <div className="w-3 h-3 border-2 border-orange-600 border-t-transparent rounded-full animate-spin mr-2"></div>
-                            Menyiapkan sistem AI...
-                          </p>
-                        )}
-                        {setupStatus === "ready" && (
-                          <p className="text-green-600 text-xs mt-1">
-                            ✅ Sistem AI siap!
-                          </p>
-                        )}
-                        {setupStatus === "error" && (
-                          <p className="text-red-600 text-xs mt-1">
-                            ❌ Gagal menyiapkan sistem
-                          </p>
-                        )}
-                      </div>
+            {events.length === 0 ? (
+              <div className="text-center py-8">
+                <svg
+                  className="w-12 h-12 text-gray-400 mx-auto mb-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                <p className="text-gray-600 mb-2">Tidak ada event yang aktif</p>
+                <p className="text-sm text-gray-500">
+                  Silakan kembali lagi nanti atau hubungi penyelenggara event.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <select
+                  value={selectedEvent}
+                  onChange={(e) => setSelectedEvent(e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                  disabled={cameraActive}
+                >
+                  <option value="">Pilih event...</option>
+                  {/* Menggunakan 'eventItem' di map */}
+                  {events.map((eventItem) => (
+                    <option key={eventItem.id} value={eventItem.id}>
+                      {eventItem.name} -{" "}
+                      {new Date(eventItem.date).toLocaleDateString("id-ID")}
+                    </option>
+                  ))}
+                </select>
+
+                {/* Event Info */}
+                {selectedEvent && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    {/* Menggunakan 'eventItem' di find */}
+                    <h4 className="font-semibold text-blue-900 mb-2">
+                      {events.find((eventItem) => eventItem.id === selectedEvent)?.name}
+                    </h4>
+                    <div className="text-sm text-blue-700 space-y-1">
+                      <p>
+                        📅{" "}
+                        {new Date(
+                          events.find((eventItem) => eventItem.id === selectedEvent)?.date || ""
+                        ).toLocaleDateString("id-ID", {
+                          weekday: "long",
+                          year: "numeric",
+                          month: "long",
+                          day: "numeric",
+                        })}
+                      </p>
+                      <p>
+                        📍{" "}
+                        {events.find((eventItem) => eventItem.id === selectedEvent)?.location}
+                      </p>
                     </div>
                   </div>
                 )}
               </div>
+            )}
+          </div>
 
-              {/* Camera Section */}
-              {events.length > 0 && (
-                <div className="space-y-3">
-                  <label className="text-sm font-medium text-gray-700">
-                    Ambil Foto Selfie untuk menemukan Foto Anda
-                  </label>
+          {/* Camera Section */}
+          {events.length > 0 && selectedEvent && (
+            <div className="bg-white rounded-xl border border-gray-200 p-6 mb-8">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                <svg
+                  className="w-5 h-5 text-gray-400 mr-2"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"
+                  />
+                </svg>
+                Ambil Selfie
+              </h3>
 
-                  <div className="relative bg-gray-100 rounded-xl overflow-hidden aspect-[4/3] flex items-center justify-center border-2 border-dashed border-gray-300">
-                    {!isCameraOpen && !isCaptured ? (
-                      // State awal - tombol buka kamera
-                      <div className="text-center p-8">
-                        <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              {/* Tampilan Awal - Tombol Buka Kamera */}
+              {!cameraActive && !capturedImage && (
+                <div className="text-center py-8">
+                  <div className="bg-gray-100 rounded-2xl p-8 mb-6 max-w-md mx-auto">
+                    <svg
+                      className="w-16 h-16 text-gray-400 mx-auto mb-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
+                      />
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"
+                      />
+                    </svg>
+                    <p className="text-gray-600">
+                      Kamera siap untuk mengambil selfie
+                    </p>
+                  </div>
+                  <button
+                    onClick={startCamera}
+                    disabled={cameraLoading}
+                    className="bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white font-bold py-3 px-8 rounded-xl text-lg transition duration-200 flex items-center justify-center space-x-3 mx-auto"
+                  >
+                    {cameraLoading ? (
+                      <>
+                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-white"></div>
+                        <span>Membuka Kamera...</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg
+                          className="w-6 h-6"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
+                          />
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"
+                          />
+                        </svg>
+                        <span>Buka Kamera</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {/* Tampilan Kamera Aktif */}
+              {cameraActive && !capturedImage && (
+                <div className="space-y-6">
+                  {/* Camera View */}
+                  <div className="relative bg-black rounded-2xl overflow-hidden max-w-md mx-auto">
+                    <video
+                      ref={videoRef}
+                      className="w-full h-auto max-h-96 object-cover"
+                      autoPlay
+                      playsInline
+                      muted
+                      style={{ transform: "scaleX(-1)" }}
+                    />
+                    <div className="absolute inset-0 border-4 border-white/30 rounded-2xl pointer-events-none"></div>
+
+                    {/* Overlay untuk guide selfie */}
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div className="w-48 h-48 border-2 border-white/50 rounded-full"></div>
+                    </div>
+                  </div>
+
+                  {/* Camera Controls */}
+                  <div className="flex flex-col items-center space-y-4">
+                    {cameraLoading ? (
+                      <div className="flex items-center space-x-2 text-gray-600">
+                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-600"></div>
+                        <span>Menyiapkan kamera...</span>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex space-x-4">
+                          <button
+                            onClick={cancelCamera}
+                            className="bg-gray-500 hover:bg-gray-600 text-white font-medium py-2 px-6 rounded-lg transition duration-200 flex items-center space-x-2"
+                          >
+                            <svg
+                              className="w-5 h-5"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M6 18L18 6M6 6l12 12"
+                              />
+                            </svg>
+                            <span>Batal</span>
+                          </button>
+
+                          <button
+                            onClick={captureImage}
+                            className="bg-white hover:bg-gray-100 border-2 border-red-500 text-red-500 font-bold w-16 h-16 rounded-full text-lg transition duration-200 flex items-center justify-center shadow-lg hover:shadow-xl transform hover:scale-105"
+                          >
+                            <div className="w-12 h-12 bg-red-500 rounded-full"></div>
+                          </button>
+                        </div>
+                        <p className="text-gray-600 text-sm">
+                          Posisikan wajah Anda di dalam lingkaran
+                        </p>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Tampilan Hasil Foto */}
+              {capturedImage && (
+                <div className="text-center space-y-6">
+                  <div className="relative bg-black rounded-2xl overflow-hidden max-w-md mx-auto">
+                    <img
+                      src={capturedImage}
+                      alt="Captured selfie"
+                      className="w-full h-auto max-h-96 object-cover rounded-2xl"
+                    />
+                    <div className="absolute inset-0 border-4 border-white/30 rounded-2xl pointer-events-none"></div>
+                  </div>
+
+                  <div className="flex justify-center space-x-4">
+                    <button
+                      onClick={retakePhoto}
+                      className="bg-gray-500 hover:bg-gray-600 text-white font-medium py-3 px-6 rounded-xl transition duration-200 flex items-center space-x-2"
+                    >
+                      <svg
+                        className="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                        />
+                      </svg>
+                      <span>Ambil Ulang</span>
+                    </button>
+
+                    <button
+                      onClick={searchFaces}
+                      disabled={searching}
+                      className="bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white font-bold py-3 px-6 rounded-xl transition duration-200 flex items-center space-x-2"
+                    >
+                      {searching ? (
+                        <>
+                          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                          <span>Mencari...</span>
+                        </>
+                      ) : (
+                        <>
                           <svg
-                            className="w-10 h-10 text-blue-600"
+                            className="w-5 h-5"
                             fill="none"
                             stroke="currentColor"
                             viewBox="0 0 24 24"
@@ -484,150 +708,46 @@ export default function ScanPage() {
                               strokeLinecap="round"
                               strokeLinejoin="round"
                               strokeWidth={2}
-                              d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
-                            />
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"
+                              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
                             />
                           </svg>
-                        </div>
-                        <p className="text-gray-600 mb-4">
-                          {selectedEvent
-                            ? "Ambil foto selfie untuk pencarian wajah dengan AI"
-                            : "Pilih event terlebih dahulu"}
-                        </p>
-                        <Button
-                          onClick={openCamera}
-                          disabled={!selectedEvent}
-                          className={`${
-                            !selectedEvent
-                              ? "bg-gray-400 cursor-not-allowed"
-                              : "bg-blue-600 hover:bg-blue-700"
-                          } text-white`}
-                        >
-                          {selectedEvent
-                            ? "Buka Kamera"
-                            : "Pilih Event Terlebih Dahulu"}
-                        </Button>
-                      </div>
-                    ) : isCameraOpen ? (
-                      // State kamera aktif
-                      <>
-                        <video
-                          ref={videoRef}
-                          autoPlay
-                          playsInline
-                          muted
-                          className="w-full h-full object-cover"
-                        />
-                        {/* Overlay panduan */}
-                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                          <div className="w-48 h-48 border-2 border-white border-dashed rounded-full"></div>
-                        </div>
-                        <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2">
-                          <Button
-                            onClick={captureImage}
-                            className="bg-red-500 hover:bg-red-600 text-white rounded-full w-16 h-16 flex items-center justify-center shadow-lg"
-                          >
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              strokeWidth={1.5}
-                              stroke="currentColor"
-                              className="w-2xl h-2xl"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15.5a2.25 2.25 0 002.25-2.25V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.24a2.25 2.25 0 00-1.664-.894H8.865c-.723 0-1.342.434-1.664.90l-.822 1.239z"
-                              />
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                d="M15.75 10.5a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z"
-                              />
-                            </svg>
-                            {/* <div className="w-12 h-12 bg-white rounded-full"></div> */}
-                          </Button>
-                        </div>
-                      </>
-                    ) : (
-                      // State foto sudah diambil
-                      <>
-                        <img
-                          src={capturedImage}
-                          alt="Foto yang diambil"
-                          className="w-full h-full object-cover"
-                        />
-                        <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex space-x-4">
-                          <Button
-                            onClick={retakePhoto}
-                            variant="outline"
-                            className="bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
-                            disabled={isProcessing}
-                          >
-                            Ambil Ulang
-                          </Button>
-                          <Button
-                            onClick={searchFaces}
-                            disabled={isProcessing}
-                            className="bg-blue-600 hover:bg-blue-700 text-white"
-                          >
-                            {isProcessing ? (
-                              <>
-                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
-                                Mencari...
-                              </>
-                            ) : (
-                              "Cari dengan AI"
-                            )}
-                          </Button>
-                        </div>
-                      </>
-                    )}
+                          <span>Cari Foto dengan AI</span>
+                        </>
+                      )}
+                    </button>
                   </div>
-
-                  {/* Canvas hidden untuk processing */}
-                  <canvas ref={canvasRef} className="hidden" />
                 </div>
               )}
 
-              {/* AI Features Info */}
-              <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg p-4 border border-blue-200">
-                <h3 className="font-semibold text-blue-900 mb-2">
-                  Teknologi AI yang Digunakan:
-                </h3>
-                <ul className="text-sm text-blue-700 space-y-1">
-                  <li>
-                    • <strong>AWS Rekognition</strong> - Face recognition
-                    technology
-                  </li>
-                  <li>• Pencarian wajah dengan akurasi tinggi</li>
-                  <li>• Bisa menemukan wajah Anda di foto grup</li>
-                  <li>• Mendeteksi wajah dari berbagai angle</li>
-                  <li>• Proses pencarian aman dan privat</li>
-                </ul>
-              </div>
+              {/* Hidden canvas for image capture */}
+              <canvas ref={canvasRef} className="hidden" />
+            </div>
+          )}
 
-              {/* Instructions */}
-              <div className="bg-green-50 rounded-lg p-4 border border-green-200">
-                <h3 className="font-semibold text-green-900 mb-2">
-                  Tips untuk Hasil Terbaik:
-                </h3>
-                <ul className="text-sm text-green-700 space-y-1">
-                  <li>• Pastikan wajah terlihat jelas dan tidak tertutup</li>
-                  <li>• Pencahayaan yang baik tanpa bayangan</li>
-                  <li>• Pandangan lurus ke kamera</li>
-                  <li>• Ekspresi wajah natural</li>
-                  <li>• Hindari topi atau kacamata hitam</li>
-                </ul>
+          {/* Instructions */}
+          <div className="mt-8 bg-gray-50 rounded-xl p-6 border border-gray-200">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              Tips Selfie Terbaik:
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
+              <div className="flex items-center space-x-2">
+                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                <span>Gunakan pencahayaan yang cukup</span>
               </div>
-            </CardContent>
-          </Card>
+              <div className="flex items-center space-x-2">
+                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                <span>Hadap langsung ke kamera</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                <span>Jangan menggunakan topi atau kacamata gelap</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                <span>Pastikan wajah terlihat jelas</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
