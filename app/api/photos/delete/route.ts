@@ -1,77 +1,111 @@
-// app/api/photos/delete/route.ts
-import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+// app/api/events/delete-full/route.ts
+
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+// Klien Admin menggunakan SERVICE_ROLE_KEY
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  }
+);
+
+// 🚨 Pastikan ini adalah nama bucket yang terlihat di gambar Anda
+const BUCKET_NAME = "event-photos";
 
 export async function DELETE(request: Request) {
-  try {
-    const { photoIds } = await request.json(); // eventId tidak perlu jika file_path sudah lengkap
+  try {
+    const { eventId } = await request.json();
 
-    const supabaseAdmin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false
-        }
-      }
-    );
+    if (!eventId) {
+      return NextResponse.json({ error: "Missing eventId" }, { status: 400 });
+    }
 
-    // 1️⃣ STEP BARU: AMBIL PATH FILE SEBELUM DATA TERHAPUS
-    console.log('🔍 Fetching file paths from database...');
+    // 1. Ambil ID Foto untuk penghapusan DB (Kita tetap perlu ini)
     const { data: photos, error: selectError } = await supabaseAdmin
-      .from('photos')
-      .select('file_path')
-      .in('id', photoIds);
-      
+      .from("photos")
+      .select("id")
+      .eq("event_id", eventId);
+
     if (selectError) {
       throw new Error(`Database SELECT error: ${selectError.message}`);
     }
 
-    const filePaths = photos.map(p => p.file_path).filter(path => path !== null) as string[];
+    const photoIds = photos.map((p) => p.id) as string[];
 
-    if (filePaths.length === 0) {
-        console.log('⚠️ No file paths found in database or all already deleted.');
-    } else {
-        // 2️⃣ STEP BARU: HAPUS DARI STORAGE
-        console.log(`🗑️ Deleting ${filePaths.length} files from storage...`);
-        const { error: storageError } = await supabaseAdmin.storage
-            .from('event-photos') // 🚨 Pastikan nama bucket sudah benar
-            .remove(filePaths);
+    // 🎯 FIX KRITIS: Hapus Seluruh Folder Event
+    // Path yang dibutuhkan Supabase adalah "event_id/"
+    const eventFolderPath = `${eventId}/`; // Tambahkan '/' di akhir
 
-        if (storageError) {
-            console.error('❌ Storage delete error:', storageError);
-            // 💡 Catatan: Kita tidak throw error di sini, karena data DB masih bisa dihapus.
-        } else {
-            console.log('✅ Files successfully deleted from storage.');
-        }
+    // 2. Hapus dari Storage menggunakan SERVICE ROLE KEY
+
+    // 🚨 PENTING: Untuk menghapus semua yang ada di dalam folder,
+    // kita perlu menggunakan list() terlebih dahulu untuk mendapatkan semua file paths.
+
+    const { data: listData, error: listError } = await supabaseAdmin.storage
+      .from(BUCKET_NAME)
+      .list(eventId, {
+        // List semua file di dalam folder eventId
+        limit: 1000, // Atur batas ini sesuai jumlah maksimal foto per event
+        offset: 0,
+        search: "",
+      });
+
+    if (listError) {
+      console.error("❌ Storage LIST error:", listError);
     }
 
+    const filesToDelete =
+      listData?.map((file) => `${eventId}/${file.name}`) || [];
 
-    // 3️⃣ STEP LAMA: Hapus dari database (Setelah file Storage dihapus)
-    console.log(`🗑️ Deleting ${photoIds.length} records from database...`);
-    const { error: dbError } = await supabaseAdmin
-      .from('photos')
-      .delete()
-      .in('id', photoIds);
+    console.log(`Files to be deleted (found via list):`, filesToDelete);
 
-    if (dbError) {
-      throw new Error(`Database DELETE error: ${dbError.message}`);
-    }
+    if (filesToDelete.length > 0) {
+      const { error: storageError } = await supabaseAdmin.storage
+        .from(BUCKET_NAME)
+        .remove(filesToDelete); // Kirim array of path
 
-    // 💡 Opsional: Hapus dari AWS Rekognition/Index Faces jika perlu
-    // ...
+      if (storageError) {
+        console.error("❌ Final Storage delete error:", storageError);
+        // Log error tapi tetap lanjutkan ke database delete
+      } else {
+        console.log(
+          `✅ ${filesToDelete.length} files successfully deleted from Storage.`
+        );
+      }
+    } else {
+      console.log(`⚠️ No files found for deletion in folder: ${eventId}`);
+    }
 
-    return NextResponse.json({ 
-      success: true,
-      message: `${photoIds.length} photos deleted successfully from DB and storage.`
-    });
+    // 3. Hapus foto dari database
+    if (photoIds.length > 0) {
+      await supabaseAdmin.from("photos").delete().in("id", photoIds);
+    }
 
-  } catch (error) {
-    console.error('Delete error:', error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to delete photos' },
-      { status: 500 }
-    );
-  }
+    // 4. Hapus Event
+    const { error: deleteEventError } = await supabaseAdmin
+      .from("events")
+      .delete()
+      .eq("id", eventId);
+
+    if (deleteEventError) {
+      throw new Error(`Gagal menghapus event: ${deleteEventError.message}`);
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: `Event dan ${filesToDelete.length} foto berhasil dihapus permanen.`,
+    });
+  } catch (error: any) {
+    console.error("❌ Server Delete error:", error);
+    return NextResponse.json(
+      { error: error.message || "Failed to delete event and associated files" },
+      { status: 500 }
+    );
+  }
 }

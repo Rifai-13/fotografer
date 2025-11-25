@@ -225,11 +225,9 @@ export default function DashboardPage() {
           .filter(Boolean)
           .filter((path) => path.startsWith("events/"));
 
-        console.log("File paths to delete from storage:", filePaths);
-
         if (filePaths.length > 0) {
           const { data: deleteResult, error: storageError } =
-            await supabase.storage.from("photos").remove(filePaths);
+            await supabase.storage.from("event-photos").remove(filePaths);
 
           if (storageError) {
             console.error("Error deleting photos from storage:", storageError);
@@ -238,7 +236,6 @@ export default function DashboardPage() {
               name: storageError.name,
               stack: storageError.stack,
             });
-            // Jangan throw error, lanjutkan dengan database deletion
           } else {
             console.log("Successfully deleted from storage:", deleteResult);
           }
@@ -264,7 +261,7 @@ export default function DashboardPage() {
 
         if (urlFileNames.length > 0) {
           const { data: urlDeleteResult, error: urlStorageError } =
-            await supabase.storage.from("photos").remove(urlFileNames);
+            await supabase.storage.from("event-photos").remove(urlFileNames);
 
           if (urlStorageError) {
             console.error(
