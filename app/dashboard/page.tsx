@@ -103,7 +103,7 @@ export default function DashboardPage() {
     try {
       const { data: eventsData, error: eventsError } = await supabase
         .from("events")
-        .select("*")
+        .select("*, photos(count)")
         .order("created_at", { ascending: false });
 
       if (eventsError) {
@@ -112,7 +112,17 @@ export default function DashboardPage() {
         return;
       }
 
-      setEvents(eventsData || []);
+      const formattedEvents = eventsData.map((event) => {
+        const countData = event.photos as unknown as [{ count: number }];
+        const liveCount = countData?.[0]?.count || 0;
+
+        return {
+          ...event,
+          photo_count: liveCount,
+        };
+      });
+
+      setEvents(formattedEvents || []);
     } catch (err) {
       console.error("Exception in fetchEvents:", err);
       setError("Terjadi kesalahan saat memuat events");
