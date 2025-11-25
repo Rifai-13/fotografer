@@ -17,7 +17,7 @@ export default function UploadPhotos({
     Array<{
       fileName: string;
       success: boolean;
-      facesIndexed?: number;
+      facesIndexed?: number; 
       message?: string;
     }>
   >([]);
@@ -26,7 +26,6 @@ export default function UploadPhotos({
   const router = useRouter();
   const supabase = createClient();
 
-  // Unwrap the params promise
   useEffect(() => {
     async function unwrapParams() {
       const unwrappedParams = await params;
@@ -43,15 +42,25 @@ export default function UploadPhotos({
         ...prev,
         ...Array(filesArray.length).fill(0),
       ]);
-      setUploadResults([]); // Reset results ketika file baru dipilih
+      setUploadResults([]);
     }
   };
 
+  // 🚀 FUNGSI UTAMA DIRECT UPLOAD
   const handleUpload = async () => {
     if (selectedFiles.length === 0 || !eventId) return;
 
     setUploading(true);
     setUploadResults([]);
+
+    const session = await supabase.auth.getSession();
+    const photographerId = session.data.session?.user.id;
+
+    if (!photographerId) {
+      setUploading(false);
+      alert("❌ Photographer tidak terautentikasi. Silahkan login ulang.");
+      return;
+    }
 
     try {
       const results = [];
@@ -64,70 +73,69 @@ export default function UploadPhotos({
             `🔄 Uploading ${i + 1}/${selectedFiles.length}: ${file.name}`
           );
 
-          // Update progress
           setUploadProgress((prev) => {
             const newProgress = [...prev];
-            newProgress[i] = 10;
+            newProgress[i] = 5;
             return newProgress;
           });
 
-          // ✅ CONVERT FILE TO BASE64 UNTUK REKOGNITION
-          const imageBytes = await convertFileToBase64(file);
-
-          // Update progress
-          setUploadProgress((prev) => {
-            const newProgress = [...prev];
-            newProgress[i] = 30;
-            return newProgress;
+          // 1️⃣ DAPATKAN SIGNED URL DARI API BARU
+          const signedUrlResponse = await fetch("/api/get-signed-url", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              fileName: file.name,
+              fileType: file.type,
+              eventId: eventId, 
+            }),
           });
 
-          // Generate unique file path
-          const fileExt = file.name.split(".").pop();
-          const fileName = `${Date.now()}-${Math.random()
-            .toString(36)
-            .substring(2)}.${fileExt}`;
-          const filePath = `${eventId}/${fileName}`;
+          const signedUrlResult = await signedUrlResponse.json();
 
-          // Upload ke Supabase Storage
-          const { data: uploadData, error: uploadError } =
-            await supabase.storage.from("event-photos").upload(filePath, file);
-
-          if (uploadError) {
-            throw new Error(`Upload gagal: ${uploadError.message}`);
+          if (!signedUrlResponse.ok || !signedUrlResult.signedUrl) {
+            throw new Error(
+              signedUrlResult.error || "Gagal mendapatkan Signed URL dari server"
+            );
           }
 
-          // Update progress
+          const { signedUrl, file_path: storagePath } = signedUrlResult;
+
           setUploadProgress((prev) => {
             const newProgress = [...prev];
-            newProgress[i] = 60;
+            newProgress[i] = 20; 
             return newProgress;
           });
 
-          // Dapatkan URL public
+          // 2️⃣ DIRECT UPLOAD MENGGUNAKAN SIGNED URL (PUT Request)
+          const directUploadResponse = await fetch(signedUrl, {
+            method: "PUT",
+            headers: {
+              "Content-Type": file.type, 
+            },
+            body: file, 
+          });
+
+          if (!directUploadResponse.ok) {
+            const errorText = await directUploadResponse.text();
+            throw new Error(`Direct Upload gagal (Status ${directUploadResponse.status}): ${errorText.substring(0, 100)}...`);
+          }
+
+          setUploadProgress((prev) => {
+            const newProgress = [...prev];
+            newProgress[i] = 75; 
+            return newProgress;
+          });
+
+          // 3️⃣ REGISTER METADATA FOTO
+          
           const { data: urlData } = supabase.storage
             .from("event-photos")
-            .getPublicUrl(filePath);
+            .getPublicUrl(storagePath); 
 
           if (!urlData.publicUrl) {
             throw new Error("Gagal mendapatkan URL public");
           }
 
-          // Dapatkan session untuk photographer_id
-          const session = await supabase.auth.getSession();
-          const photographerId = session.data.session?.user.id;
-
-          if (!photographerId) {
-            throw new Error("Photographer tidak terautentikasi");
-          }
-
-          // Update progress
-          setUploadProgress((prev) => {
-            const newProgress = [...prev];
-            newProgress[i] = 80;
-            return newProgress;
-          });
-
-          // ✅ REGISTER PHOTO DENGAN IMAGE_BYTES
           const registerResponse = await fetch("/api/register-photo", {
             method: "POST",
             headers: {
@@ -135,34 +143,32 @@ export default function UploadPhotos({
             },
             body: JSON.stringify({
               storage_url: urlData.publicUrl,
-              file_path: filePath,
+              file_path: storagePath, 
               file_name: file.name,
               file_size: file.size,
               event_id: eventId,
               photographer_id: photographerId,
-              image_bytes: imageBytes, // ✅ KIRIM BASE64 UNTUK REKOGNITION
+              // image_bytes TIDAK DIKIRIM
             }),
           });
-
+          
           const registerResult = await registerResponse.json();
 
           if (!registerResponse.ok) {
             throw new Error(registerResult.error || "Gagal register photo");
           }
 
-          // Update progress to 100%
           setUploadProgress((prev) => {
             const newProgress = [...prev];
             newProgress[i] = 100;
             return newProgress;
           });
 
-          // Simpan hasil
           results.push({
             fileName: file.name,
             success: true,
-            facesIndexed: registerResult.rekognition?.facesIndexed || 0,
-            message: registerResult.rekognition?.message || "Upload berhasil",
+            facesIndexed: 0, 
+            message: registerResult.message,
           });
 
           console.log(`✅ Upload berhasil: ${file.name}`, registerResult);
@@ -173,28 +179,28 @@ export default function UploadPhotos({
             success: false,
             message: error.message,
           });
+          setUploadProgress((prev) => {
+            const newProgress = [...prev];
+            newProgress[i] = 100; 
+            return newProgress;
+          });
         }
       }
 
       setUploadResults(results);
 
-      // Tampilkan summary
       const successfulUploads = results.filter((r) => r.success);
-      const totalFaces = results.reduce(
-        (sum, r) => sum + (r.facesIndexed || 0),
-        0
-      );
+      const totalSuccessful = successfulUploads.length;
 
-      if (successfulUploads.length > 0) {
+      if (totalSuccessful > 0) {
         alert(
-          `✅ ${successfulUploads.length}/${selectedFiles.length} foto berhasil diupload\n👤 ${totalFaces} wajah terdaftar ke AI`
+          `✅ ${totalSuccessful}/${selectedFiles.length} foto berhasil diupload\n💡 Processing wajah akan berjalan di background.`
         );
       } else {
         alert("❌ Semua upload gagal");
       }
 
-      // Redirect setelah 2 detik jika ada yang berhasil
-      if (successfulUploads.length > 0) {
+      if (totalSuccessful > 0) {
         setTimeout(() => {
           router.push(`/dashboard/events/${eventId}/manage`);
         }, 2000);
@@ -202,7 +208,7 @@ export default function UploadPhotos({
     } catch (error) {
       console.error("Upload process failed:", error);
       alert(
-        `Upload gagal: ${
+        `Upload process failed: ${
           error instanceof Error ? error.message : "Unknown error"
         }`
       );
@@ -211,20 +217,7 @@ export default function UploadPhotos({
     }
   };
 
-  // Helper function: Convert file to base64
-  const convertFileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const base64 = e.target?.result as string;
-        // Remove data:image/jpeg;base64, prefix
-        const base64Data = base64.replace(/^data:image\/\w+;base64,/, "");
-        resolve(base64Data);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  };
+  // ❌ Hapus fungsi convertFileToBase64 di sini
 
   const removeFile = (index: number) => {
     setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
@@ -236,7 +229,6 @@ export default function UploadPhotos({
     fileInputRef.current?.click();
   };
 
-  // Tampilkan loading jika eventId belum tersedia
   if (!eventId) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -342,10 +334,7 @@ export default function UploadPhotos({
                     <div className="text-xs">
                       {result.success ? (
                         <span>
-                          ✅{" "}
-                          {result.facesIndexed
-                            ? `${result.facesIndexed} wajah`
-                            : "Tidak ada wajah"}
+                          ✅ Processing
                         </span>
                       ) : (
                         <span>❌ Gagal</span>
