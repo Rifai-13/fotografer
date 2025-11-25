@@ -17,7 +17,7 @@ export default function UploadPhotos({
     Array<{
       fileName: string;
       success: boolean;
-      facesIndexed?: number; 
+      facesIndexed?: number;
       message?: string;
     }>
   >([]);
@@ -86,7 +86,7 @@ export default function UploadPhotos({
             body: JSON.stringify({
               fileName: file.name,
               fileType: file.type,
-              eventId: eventId, 
+              eventId: eventId,
             }),
           });
 
@@ -94,7 +94,8 @@ export default function UploadPhotos({
 
           if (!signedUrlResponse.ok || !signedUrlResult.signedUrl) {
             throw new Error(
-              signedUrlResult.error || "Gagal mendapatkan Signed URL dari server"
+              signedUrlResult.error ||
+                "Gagal mendapatkan Signed URL dari server"
             );
           }
 
@@ -102,7 +103,7 @@ export default function UploadPhotos({
 
           setUploadProgress((prev) => {
             const newProgress = [...prev];
-            newProgress[i] = 20; 
+            newProgress[i] = 20;
             return newProgress;
           });
 
@@ -110,27 +111,31 @@ export default function UploadPhotos({
           const directUploadResponse = await fetch(signedUrl, {
             method: "PUT",
             headers: {
-              "Content-Type": file.type, 
+              "Content-Type": file.type,
             },
-            body: file, 
+            body: file,
           });
 
           if (!directUploadResponse.ok) {
             const errorText = await directUploadResponse.text();
-            throw new Error(`Direct Upload gagal (Status ${directUploadResponse.status}): ${errorText.substring(0, 100)}...`);
+            throw new Error(
+              `Direct Upload gagal (Status ${
+                directUploadResponse.status
+              }): ${errorText.substring(0, 100)}...`
+            );
           }
 
           setUploadProgress((prev) => {
             const newProgress = [...prev];
-            newProgress[i] = 75; 
+            newProgress[i] = 75;
             return newProgress;
           });
 
           // 3️⃣ REGISTER METADATA FOTO
-          
+
           const { data: urlData } = supabase.storage
             .from("event-photos")
-            .getPublicUrl(storagePath); 
+            .getPublicUrl(storagePath);
 
           if (!urlData.publicUrl) {
             throw new Error("Gagal mendapatkan URL public");
@@ -143,7 +148,7 @@ export default function UploadPhotos({
             },
             body: JSON.stringify({
               storage_url: urlData.publicUrl,
-              file_path: storagePath, 
+              file_path: storagePath,
               file_name: file.name,
               file_size: file.size,
               event_id: eventId,
@@ -151,7 +156,7 @@ export default function UploadPhotos({
               // image_bytes TIDAK DIKIRIM
             }),
           });
-          
+
           const registerResult = await registerResponse.json();
 
           if (!registerResponse.ok) {
@@ -167,7 +172,7 @@ export default function UploadPhotos({
           results.push({
             fileName: file.name,
             success: true,
-            facesIndexed: 0, 
+            facesIndexed: 0,
             message: registerResult.message,
           });
 
@@ -181,7 +186,7 @@ export default function UploadPhotos({
           });
           setUploadProgress((prev) => {
             const newProgress = [...prev];
-            newProgress[i] = 100; 
+            newProgress[i] = 100;
             return newProgress;
           });
         }
@@ -267,9 +272,9 @@ export default function UploadPhotos({
             <h1 className="text-2xl font-bold">Upload Foto untuk Event</h1>
             <button
               onClick={() => router.back()}
-              className="text-gray-500 hover:text-gray-700"
+              className="text-gray-500 hover:text-gray-700 py-2 px-4 rounded-md border border-gray-300"
             >
-              ← Kembali
+              Kembali
             </button>
           </div>
 
@@ -333,9 +338,7 @@ export default function UploadPhotos({
                     <span className="text-sm">{result.fileName}</span>
                     <div className="text-xs">
                       {result.success ? (
-                        <span>
-                          ✅ Processing
-                        </span>
+                        <span>✅ Processing</span>
                       ) : (
                         <span>❌ Gagal</span>
                       )}
@@ -346,13 +349,64 @@ export default function UploadPhotos({
             </div>
           )}
 
+          {selectedFiles.length > 0 && (
+            <div className="mb-6 border-b pb-4">
+                <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-xl font-semibold">
+                        Foto yang akan diupload ({selectedFiles.length})
+                    </h2>
+                    <div className="flex space-x-3">
+                        <button
+                            onClick={() => {
+                                setSelectedFiles([]);
+                                setUploadResults([]);
+                            }}
+                            disabled={uploading}
+                            className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                        >
+                            Batalkan Semua
+                        </button>
+                        <button
+                            onClick={handleUpload}
+                            disabled={uploading || selectedFiles.length === 0}
+                            className="bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-6 rounded-md disabled:opacity-50 flex items-center"
+                        >
+                            {uploading ? (
+                                <>
+                                    <svg
+                                        className="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                        fill="none"
+                                        viewBox="0 0 24 24"
+                                    >
+                                        <circle
+                                            className="opacity-25"
+                                            cx="12"
+                                            cy="12"
+                                            r="10"
+                                            stroke="currentColor"
+                                            strokeWidth="4"
+                                        ></circle>
+                                        <path
+                                            className="opacity-75"
+                                            fill="currentColor"
+                                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                        ></path>
+                                    </svg>
+                                    Mengupload...
+                                </>
+                            ) : (
+                                "Upload Semua"
+                            )}
+                        </button>
+                    </div>
+                </div>
+            </div>
+          )}
+
           {/* Selected Files */}
           {selectedFiles.length > 0 && (
             <div className="mb-6">
-              <h2 className="text-xl font-semibold mb-4">
-                Foto yang akan diupload ({selectedFiles.length})
-              </h2>
-
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {selectedFiles.map((file, index) => (
                   <div
@@ -395,53 +449,7 @@ export default function UploadPhotos({
                   </div>
                 ))}
               </div>
-
-              <div className="mt-6 flex justify-end space-x-3">
-                <button
-                  onClick={() => {
-                    setSelectedFiles([]);
-                    setUploadResults([]);
-                  }}
-                  disabled={uploading}
-                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                >
-                  Batalkan Semua
-                </button>
-
-                <button
-                  onClick={handleUpload}
-                  disabled={uploading || selectedFiles.length === 0}
-                  className="bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-6 rounded-md disabled:opacity-50 flex items-center"
-                >
-                  {uploading ? (
-                    <>
-                      <svg
-                        className="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                      >
-                        <circle
-                          className="opacity-25"
-                          cx="12"
-                          cy="12"
-                          r="10"
-                          stroke="currentColor"
-                          strokeWidth="4"
-                        ></circle>
-                        <path
-                          className="opacity-75"
-                          fill="currentColor"
-                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                        ></path>
-                      </svg>
-                      Mengupload...
-                    </>
-                  ) : (
-                    "Upload Semua"
-                  )}
-                </button>
-              </div>
+              
             </div>
           )}
         </div>

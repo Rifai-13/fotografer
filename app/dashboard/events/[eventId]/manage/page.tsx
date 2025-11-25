@@ -187,12 +187,6 @@ export default function ManagePhotos({ params }: { params: Promise<{ eventId: st
               <h1 className="text-2xl font-bold">Kelola Foto Event</h1>
               <div className="flex space-x-3">
                 <button
-                  onClick={() => router.push(`/dashboard/events/${eventId}/upload`)}
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md transition duration-200"
-                >
-                  Upload Foto Baru
-                </button>
-                <button
                   onClick={() => router.back()}
                   className="text-gray-500 hover:text-gray-700 py-2 px-4 rounded-md border border-gray-300"
                 >
