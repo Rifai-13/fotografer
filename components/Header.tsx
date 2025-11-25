@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import Image from 'next/image'
 
 export default function Header() {
   return (
@@ -6,10 +7,12 @@ export default function Header() {
       <div className="container mx-auto px-4 sm:px-6">
         <nav className="flex justify-between items-center py-4">
           <Link href="/" className="flex items-center space-x-2">
-            <div className="text-2xl">📸</div>
-            <span className="text-2xl font-bold text-gray-900">
-              Foto<span className="text-indigo-600">AI</span>
-            </span>
+            <Image
+              src="/logo.png"
+              alt="Logo Fotografer"
+              width={90}
+              height={50}
+            />
           </Link>
           
           <div className="flex items-center space-x-4">
