@@ -32,6 +32,13 @@ interface StorageStats {
   usagePercentage: number;
 }
 
+interface Photo {
+  id: string;
+  image_url: string;
+  file_path: string;
+  file_name: string;
+}
+
 export default function DashboardPage() {
   const [events, setEvents] = useState<Event[]>([]);
   const [user, setUser] = useState<User | null>(null);
@@ -42,6 +49,11 @@ export default function DashboardPage() {
     totalFiles: 0,
     usagePercentage: 0
   });
+  const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; event: Event | null }>({
+    isOpen: false,
+    event: null
+  });
+  const [deleting, setDeleting] = useState(false);
   const router = useRouter();
   const supabase = createClient();
 
@@ -166,6 +178,142 @@ export default function DashboardPage() {
     router.push(`/dashboard/events/${eventId}/upload`);
   };
 
+  const handleDeleteEvent = (event: Event) => {
+    setDeleteModal({ isOpen: true, event });
+  };
+
+  const confirmDeleteEvent = async () => {
+    if (!deleteModal.event) return;
+
+    try {
+      setDeleting(true);
+      
+      const eventId = deleteModal.event.id;
+      const eventName = deleteModal.event.name;
+
+      console.log(`Starting deletion process for event: ${eventName}`);
+
+      // 1. First, get all photos associated with this event
+      const { data: photos, error: photosError } = await supabase
+        .from('photos')
+        .select('id, image_url, file_path, file_name')
+        .eq('event_id', eventId);
+
+      if (photosError) {
+        console.error('Error fetching photos for deletion:', photosError);
+        throw new Error('Gagal mengambil data foto');
+      }
+
+      console.log(`Found ${photos?.length || 0} photos to delete`);
+
+      // 2. Delete photos from storage if they exist
+      if (photos && photos.length > 0) {
+        const filePaths = photos
+          .map(photo => photo.file_path)
+          .filter(Boolean)
+          .filter(path => path.startsWith('events/'));
+
+        console.log('File paths to delete from storage:', filePaths);
+
+        if (filePaths.length > 0) {
+          const { data: deleteResult, error: storageError } = await supabase.storage
+            .from('photos')
+            .remove(filePaths);
+
+          if (storageError) {
+            console.error('Error deleting photos from storage:', storageError);
+            console.error('Storage error details:', {
+              message: storageError.message,
+              name: storageError.name,
+              stack: storageError.stack
+            });
+            // Jangan throw error, lanjutkan dengan database deletion
+          } else {
+            console.log('Successfully deleted from storage:', deleteResult);
+          }
+        } else {
+          console.log('No valid file paths found for storage deletion');
+        }
+
+        // 3. Also try to extract file names from image_url and delete them
+        const urlFileNames = photos
+          .map(photo => {
+            // Extract file name from URL
+            const url = photo.image_url;
+            if (url) {
+              const matches = url.match(/\/([^\/?]+)\?/);
+              return matches ? matches[1] : null;
+            }
+            return null;
+          })
+          .filter(Boolean)
+          .map(fileName => `events/${eventId}/${fileName}`);
+
+        console.log('File names extracted from URLs:', urlFileNames);
+
+        if (urlFileNames.length > 0) {
+          const { data: urlDeleteResult, error: urlStorageError } = await supabase.storage
+            .from('photos')
+            .remove(urlFileNames);
+
+          if (urlStorageError) {
+            console.error('Error deleting photos from storage using URL names:', urlStorageError);
+          } else {
+            console.log('Successfully deleted from storage using URL names:', urlDeleteResult);
+          }
+        }
+      }
+
+      // 4. Delete photos from database
+      const { error: deletePhotosError } = await supabase
+        .from('photos')
+        .delete()
+        .eq('event_id', eventId);
+
+      if (deletePhotosError) {
+        console.error('Error deleting photos from database:', deletePhotosError);
+        throw new Error('Gagal menghapus foto dari database');
+      }
+
+      console.log('Successfully deleted photos from database');
+
+      // 5. Finally delete the event
+      const { error: deleteEventError } = await supabase
+        .from('events')
+        .delete()
+        .eq('id', eventId);
+
+      if (deleteEventError) {
+        console.error('Error deleting event:', deleteEventError);
+        throw new Error('Gagal menghapus event');
+      }
+
+      console.log('Successfully deleted event from database');
+
+      // 6. Update local state
+      setEvents(prev => prev.filter(event => event.id !== eventId));
+      
+      // 7. Refresh storage stats
+      await fetchStorageStats();
+
+      // 8. Close modal and show success
+      setDeleteModal({ isOpen: false, event: null });
+      
+      // Show success message
+      alert(`Event "${eventName}" berhasil dihapus! ${photos?.length || 0} foto telah dihapus dari storage.`);
+
+    } catch (err: any) {
+      console.error('Error in delete event:', err);
+      alert(err.message || 'Terjadi kesalahan saat menghapus event');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const cancelDeleteEvent = () => {
+    setDeleteModal({ isOpen: false, event: null });
+  };
+
   const getUserName = () => {
     if (!user) return "Pengguna";
     return user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || "Pengguna";
@@ -203,6 +351,71 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+      {/* Delete Confirmation Modal */}
+      {deleteModal.isOpen && deleteModal.event && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-auto shadow-xl">
+            <div className="text-center">
+              {/* Warning Icon */}
+              <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100 mb-4">
+                <svg className="h-6 w-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.35 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+              </div>
+              
+              <h3 className="text-lg font-bold text-gray-900 mb-2">
+                Hapus Event?
+              </h3>
+              
+              <p className="text-gray-600 mb-4">
+                Apakah Anda yakin ingin menghapus event <strong>"{deleteModal.event.name}"</strong>? 
+                Semua foto yang sudah diupload untuk event ini akan terhapus permanen dan tidak dapat dikembalikan.
+              </p>
+
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                <div className="flex items-start space-x-2">
+                  <svg className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.35 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                  <p className="text-sm text-red-700">
+                    <strong>Peringatan:</strong> Tindakan ini tidak dapat dibatalkan. {deleteModal.event.photo_count || 0} foto akan dihapus permanen dari storage.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex space-x-3">
+                <button
+                  onClick={cancelDeleteEvent}
+                  disabled={deleting}
+                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2 px-4 rounded-lg transition duration-200 disabled:opacity-50"
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={confirmDeleteEvent}
+                  disabled={deleting}
+                  className="flex-1 bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg transition duration-200 disabled:opacity-50 flex items-center justify-center space-x-2"
+                >
+                  {deleting ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      <span>Menghapus...</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      <span>Hapus</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="bg-white/80 backdrop-blur-sm border-b border-gray-200/60">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -352,12 +565,23 @@ export default function DashboardPage() {
               {events.map((event, index) => (
                 <div
                   key={event.id}
-                  className="bg-white rounded-xl border border-gray-200/80 shadow-sm hover:shadow-md transition duration-200 overflow-hidden group"
+                  className="bg-white rounded-xl border border-gray-200/80 shadow-sm hover:shadow-md transition duration-200 overflow-hidden group relative"
                 >
+                  {/* Delete Button */}
+                  <button
+                    onClick={() => handleDeleteEvent(event)}
+                    className="absolute top-3 right-3 bg-white/80 hover:bg-red-500 text-gray-400 hover:text-white p-1.5 rounded-lg transition duration-200 opacity-0 group-hover:opacity-100"
+                    title="Hapus Event"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+
                   <div className="p-5">
                     {/* Event Header */}
                     <div className="flex justify-between items-start mb-3">
-                      <h3 className="font-bold text-gray-900 text-lg group-hover:text-blue-600 transition duration-200 line-clamp-1">
+                      <h3 className="font-bold text-gray-900 text-lg group-hover:text-blue-600 transition duration-200 line-clamp-1 pr-8">
                         {event.name}
                       </h3>
                       <span
