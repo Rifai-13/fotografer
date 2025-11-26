@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FotoAi - Temukan Momen Terbaikmu",
+  title: "Sehat87",
   description: "Temukan foto Anda dalam hitungan detik dengan teknologi AI",
 };
 
