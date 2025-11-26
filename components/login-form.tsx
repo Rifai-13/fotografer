@@ -21,6 +21,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
+import Image from "next/image";
 
 export function LoginForm({
   className,
@@ -35,6 +36,13 @@ export function LoginForm({
 
   const togglePasswordVisibility = () => {
     setShowPassword(!showPassword)
+  }
+
+  const handleExit = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    console.log("Exit button clicked")
+    router.push("/")
   }
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -74,11 +82,6 @@ export function LoginForm({
         setTimeout(() => {
           window.location.href = "/dashboard"
         }, 1000)
-
-        // Method 2: Alternative router approach with refresh
-        // router.push("/dashboard")
-        // router.refresh()
-
       }
     } catch (error: any) {
       console.error("❌ Unexpected error:", error)
@@ -93,20 +96,26 @@ export function LoginForm({
   return (
     <div
       className={cn(
-        "min-h-screen bg-background flex items-center justify-center p-6",
+        "min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-100 flex items-center justify-center p-6",
         className
       )}
       {...props}
     >
-      <Card className="w-full max-w-md border border-border/40 shadow-sm rounded-xl bg-card relative">
-        {/* Exit Button */}
+      <Card className="w-full max-w-md border border-blue-200/60 shadow-lg rounded-2xl bg-white/80 backdrop-blur-sm relative overflow-hidden">
+        {/* Background Decorative Elements */}
+        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-blue-600"></div>
+        <div className="absolute -top-24 -right-24 w-48 h-48 bg-blue-100 rounded-full opacity-50"></div>
+        <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-blue-200 rounded-full opacity-30"></div>
+
+        {/* Exit Button - FIXED */}
         <button
-          onClick={() => router.push("/")}
-          className="absolute top-6 left-6 w-10 h-10 bg-muted hover:bg-muted/80 rounded-full flex items-center justify-center transition-colors duration-200 z-10"
+          onClick={handleExit}
+          className="absolute top-6 left-6 w-10 h-10 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-full flex items-center justify-center transition-all duration-200 z-50 group cursor-pointer"
           aria-label="Kembali ke beranda"
+          type="button"
         >
           <svg 
-            className="w-5 h-5 text-muted-foreground" 
+            className="w-5 h-5 text-blue-600 group-hover:text-blue-700" 
             fill="none" 
             stroke="currentColor" 
             viewBox="0 0 24 24"
@@ -120,26 +129,37 @@ export function LoginForm({
           </svg>
         </button>
 
-        <CardHeader className="text-center space-y-1 p-6 pb-2">
-          <div className="flex justify-center mb-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-primary to-primary/80 rounded-xl flex items-center justify-center">
-              <span className="text-white text-lg">📸</span>
+        <CardHeader className="text-center space-y-1 p-8 pb-4 relative z-10">
+          {/* Logo Section */}
+          <div className="flex justify-center mb-6">
+            <div className="flex items-center space-x-3">
+              <div className="w-24 h-20 bg-gradient-to-br rounded-xl flex items-center justify-center shadow-lg">
+                <Image
+                  src="/logo.png"
+                  alt="Logo"
+                  width={92}
+                  height={32}
+                  className="text-white"
+                />
+              </div>
             </div>
           </div>
-          <CardTitle className="text-2xl font-light text-card-foreground">
+          
+          <CardTitle className="text-2xl font-bold text-blue-900">
             Masuk ke Akun
           </CardTitle>
-          <CardDescription className="text-muted-foreground">
+          <CardDescription className="text-blue-600/80">
             Selamat datang kembali! Silakan masuk ke akun Anda.
           </CardDescription>
         </CardHeader>
-        <CardContent className="p-6 pt-0">
+        
+        <CardContent className="p-8 pt-2 relative z-10">
           <form onSubmit={handleLogin}>
-            <FieldGroup className="space-y-2">
+            <FieldGroup className="space-y-4">
               <Field>
                 <FieldLabel
                   htmlFor="email"
-                  className="text-xs font-medium text-muted-foreground"
+                  className="text-sm font-medium text-blue-900"
                 >
                   Email
                 </FieldLabel>
@@ -150,14 +170,14 @@ export function LoginForm({
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full h-9 text-sm border border-input rounded-md"
+                  className="w-full h-11 text-sm border-2 border-blue-200 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 bg-white/50"
                 />
               </Field>
 
               <Field>
                 <FieldLabel
                   htmlFor="password"
-                  className="text-xs font-medium text-muted-foreground"
+                  className="text-sm font-medium text-blue-900"
                 >
                   Password
                 </FieldLabel>
@@ -169,20 +189,20 @@ export function LoginForm({
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full h-9 text-sm border border-input rounded-md pr-10"
+                    className="w-full h-11 text-sm border-2 border-blue-200 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 bg-white/50 pr-12"
                   />
                   <button
                     type="button"
                     onClick={togglePasswordVisibility}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 transition-colors"
+                    className="absolute inset-y-0 right-0 pr-4 flex items-center text-blue-400 hover:text-blue-600 transition-colors"
                     aria-label={showPassword ? "Sembunyikan password" : "Tampilkan password"}
                   >
                     {showPassword ? (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
                       </svg>
                     ) : (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                       </svg>
@@ -191,31 +211,44 @@ export function LoginForm({
                 </div>
               </Field>
 
-              <Field className="pt-1">
+              <Field className="pt-2">
                 <Button
                   type="submit"
                   disabled={loading}
-                  className="w-full h-9 bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-medium rounded-md"
+                  className="w-full h-11 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white text-sm font-semibold rounded-lg shadow-lg shadow-blue-500/25 hover:shadow-blue-600/25 transition-all duration-200 transform hover:scale-[1.02] disabled:opacity-50 disabled:transform-none"
                 >
-                  {loading ? "Masuk..." : "Lanjutkan"}
+                  {loading ? (
+                    <div className="flex items-center space-x-2">
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      <span>Memproses...</span>
+                    </div>
+                  ) : (
+                    "Masuk ke Dashboard"
+                  )}
                 </Button>
               </Field>
 
-              <FieldDescription className="text-center text-xs text-muted-foreground pt-3">
+              {/* Fixed: Replace nested p elements with div */}
+              <div className="text-center space-y-3 pt-4">
                 <Link
                   href="/forgot-password"
-                  className="font-medium text-primary hover:underline block mb-2"
+                  className="text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline block transition-colors"
                 >
                   Lupa password?
                 </Link>
-                Belum punya akun?{" "}
-                <Link
-                  href="/signup"
-                  className="text-primary font-medium hover:underline"
-                >
-                  Daftar
-                </Link>
-              </FieldDescription>
+                
+                <div className="border-t border-blue-200 pt-4">
+                  <div className="text-xs text-blue-600/80">
+                    Belum punya akun?{" "}
+                    <Link
+                      href="/signup"
+                      className="font-semibold text-blue-600 hover:text-blue-700 hover:underline transition-colors"
+                    >
+                      Daftar sekarang
+                    </Link>
+                  </div>
+                </div>
+              </div>
             </FieldGroup>
           </form>
         </CardContent>

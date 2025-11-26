@@ -2,7 +2,6 @@ import Header from "@/components/Header";
 import Hero from "@/components/Hero";
 import HowItWorks from "@/components/HowItWorks";
 import Events from "@/components/Events";
-// import Contact from "@/components/Contact";
 import Footer from "@/components/Footer";
 
 export default function Home() {
@@ -11,8 +10,7 @@ export default function Home() {
     <Header />
     <Hero />
     <HowItWorks />
-    <Events />
-    {/* <Contact /> */}
+    {/* <Events /> */}
     <Footer />
     </>
   );

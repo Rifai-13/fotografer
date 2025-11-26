@@ -19,6 +19,7 @@ export default function ManagePhotos({ params }: { params: Promise<{ eventId: st
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [eventId, setEventId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const router = useRouter();
 
   // Unwrap the params promise
@@ -90,7 +91,8 @@ export default function ManagePhotos({ params }: { params: Promise<{ eventId: st
     if (!eventId) return;
     
     try {
-      // API untuk delete photos
+      setDeleting(true);
+      
       const response = await fetch('/api/photos/delete-mass', {
         method: 'DELETE',
         headers: {
@@ -111,11 +113,11 @@ export default function ManagePhotos({ params }: { params: Promise<{ eventId: st
       setSelectedPhotos([]);
       setDeleteConfirm(false);
       
-      // Refresh the page to ensure data is synced
-      window.location.reload();
     } catch (error) {
       console.error('Failed to delete photos:', error);
       alert('Gagal menghapus foto. Silakan coba lagi.');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -184,15 +186,13 @@ export default function ManagePhotos({ params }: { params: Promise<{ eventId: st
         <div className="bg-white rounded-lg shadow-md overflow-hidden">
           <div className="p-6 border-b border-gray-200">
             <div className="flex justify-between items-center">
-              <h1 className="text-2xl font-bold">Kelola Foto Event</h1>
-              <div className="flex space-x-3">
-                <button
-                  onClick={() => router.back()}
-                  className="text-gray-500 hover:text-gray-700 py-2 px-4 rounded-md border border-gray-300"
-                >
-                  Kembali
-                </button>
-              </div>
+              <h1 className="text-2xl font-bold text-gray-900">Kelola Foto Event</h1>
+              <button
+                onClick={() => router.back()}
+                className="text-gray-600 hover:text-gray-800 hover:bg-gray-100 py-2 px-4 rounded-md border border-gray-300 transition duration-200"
+              >
+                Kembali
+              </button>
             </div>
             
             <div className="mt-4 flex items-center justify-between">
@@ -208,7 +208,7 @@ export default function ManagePhotos({ params }: { params: Promise<{ eventId: st
                       id="select-all"
                       checked={selectedPhotos.length === photos.length && photos.length > 0}
                       onChange={selectAllPhotos}
-                      className="h-4 w-4 text-blue-600 rounded"
+                      className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
                     />
                     <label htmlFor="select-all" className="ml-2 text-sm text-gray-700">
                       Pilih Semua ({selectedPhotos.length} terpilih)
@@ -218,9 +218,9 @@ export default function ManagePhotos({ params }: { params: Promise<{ eventId: st
                   {selectedPhotos.length > 0 && (
                     <button
                       onClick={() => setDeleteConfirm(true)}
-                      className="bg-red-600 hover:bg-red-700 text-white font-medium py-1 px-3 rounded text-sm flex items-center"
+                      className="bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded text-sm flex items-center transition duration-200"
                     >
-                      <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                      <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                       </svg>
                       Hapus ({selectedPhotos.length})
@@ -253,9 +253,12 @@ export default function ManagePhotos({ params }: { params: Promise<{ eventId: st
                 {photos.map(photo => (
                   <div 
                     key={photo.id} 
-                    className={`border rounded-lg overflow-hidden bg-gray-100 transition-all duration-200 ${
-                      selectedPhotos.includes(photo.id) ? 'ring-2 ring-blue-500 border-blue-500' : 'border-gray-300'
+                    className={`border rounded-lg overflow-hidden bg-gray-100 transition-all duration-200 cursor-pointer ${
+                      selectedPhotos.includes(photo.id) 
+                        ? 'ring-2 ring-blue-500 border-blue-500 shadow-md' 
+                        : 'border-gray-300 hover:border-gray-400'
                     }`}
+                    onClick={() => togglePhotoSelection(photo.id)}
                   >
                     <div className="relative aspect-square">
                       <img 
@@ -263,23 +266,25 @@ export default function ManagePhotos({ params }: { params: Promise<{ eventId: st
                         alt={photo.filename}
                         className="object-cover w-full h-full"
                         onError={(e) => {
-                          // Fallback jika gambar gagal load
-                          e.currentTarget.src = '/placeholder-image.jpg';
+                          e.currentTarget.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iI2YzZjRmNiIvPjx0ZXh0IHg9IjEwMCIgeT0iMTAwIiBmb250LWZhbWlseT0iQXJpYWwsIHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMTQiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIGZpbGw9IiM5YzljOWMiPkltYWdlIE5vdCBGb3VuZDwvdGV4dD48L3N2Zz4=';
                         }}
                       />
                       
-                      <div className="absolute top-2 left-2">
+                      <div 
+                        className="absolute top-2 left-2"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         <input
                           type="checkbox"
                           checked={selectedPhotos.includes(photo.id)}
                           onChange={() => togglePhotoSelection(photo.id)}
-                          className="h-5 w-5 text-blue-600 rounded bg-white"
+                          className="h-5 w-5 text-blue-600 rounded border-gray-300 bg-white focus:ring-blue-500 cursor-pointer"
                         />
                       </div>
                     </div>
                     
-                    <div className="p-3">
-                      <p className="text-sm font-medium truncate" title={photo.filename}>
+                    <div className="p-3 bg-white">
+                      <p className="text-sm font-medium text-gray-900 truncate" title={photo.filename}>
                         {photo.filename}
                       </p>
                       <div className="flex justify-between text-xs text-gray-500 mt-1">
@@ -295,27 +300,96 @@ export default function ManagePhotos({ params }: { params: Promise<{ eventId: st
         </div>
       </div>
 
-      {/* Delete Confirmation Modal */}
+      {/* DELETE CONFIRMATION MODAL - SAMA PERSIS SEPERTI DI DASHBOARD */}
       {deleteConfirm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg max-w-md w-full p-6">
-            <h3 className="text-lg font-medium text-gray-900 mb-2">Hapus Foto</h3>
-            <p className="text-gray-600 mb-6">
-              Apakah Anda yakin ingin menghapus {selectedPhotos.length} foto? Tindakan ini tidak dapat dibatalkan.
-            </p>
-            <div className="flex justify-end space-x-3">
-              <button
-                onClick={() => setDeleteConfirm(false)}
-                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-              >
-                Batal
-              </button>
-              <button
-                onClick={handleDelete}
-                className="bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-md"
-              >
-                Hapus
-              </button>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-auto shadow-xl">
+            <div className="text-center">
+              {/* Warning Icon */}
+              <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100 mb-4">
+                <svg
+                  className="h-6 w-6 text-red-600"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.35 16.5c-.77.833.192 2.5 1.732 2.5z"
+                  />
+                </svg>
+              </div>
+
+              <h3 className="text-lg font-bold text-gray-900 mb-2">
+                Hapus Foto?
+              </h3>
+
+              <p className="text-gray-600 mb-4">
+                Apakah Anda yakin ingin menghapus <strong>{selectedPhotos.length} foto</strong>? 
+                Tindakan ini tidak dapat dibatalkan dan foto akan dihapus permanen.
+              </p>
+
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                <div className="flex items-start space-x-2">
+                  <svg
+                    className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.35 16.5c-.77.833.192 2.5 1.732 2.5z"
+                    />
+                  </svg>
+                  <p className="text-sm text-red-700">
+                    <strong>Peringatan:</strong> Tindakan ini tidak dapat dibatalkan.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => setDeleteConfirm(false)}
+                  disabled={deleting}
+                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2 px-4 rounded-lg transition duration-200 disabled:opacity-50"
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="flex-1 bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg transition duration-200 disabled:opacity-50 flex items-center justify-center space-x-2"
+                >
+                  {deleting ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      <span>Menghapus...</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                        />
+                      </svg>
+                      <span>Hapus</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
