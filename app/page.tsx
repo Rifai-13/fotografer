@@ -10,7 +10,7 @@ export default function Home() {
     <Header />
     <Hero />
     <HowItWorks />
-    <Events />
+    {/* <Events /> */}
     <Footer />
     </>
   );

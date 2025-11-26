@@ -15,6 +15,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
 import { toast } from "sonner";
+import Image from "next/image";
 
 export default function SignupForm() {
   const [formData, setFormData] = useState({
@@ -30,6 +31,14 @@ export default function SignupForm() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const router = useRouter();
   const supabase = createClient();
+
+  // Fungsi handleExit yang diperbaiki
+  const handleExit = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation(); // Mencegah event bubbling
+    console.log("Exit button clicked - navigating to home");
+    router.push("/");
+  };
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
@@ -117,9 +126,6 @@ export default function SignupForm() {
       if (authData.user) {
         console.log("✅ Auth user created:", authData.user.id);
 
-        // TIDAK PERLU INSERT MANUAL LAGI - SUDAH DITANGANI OLEH TRIGGER
-        // Trigger akan otomatis membuat record di tabel users
-
         toast.success("Akun berhasil dibuat!", {
           description: "Silakan periksa email Anda untuk mengkonfirmasi akun.",
           id: toastId,
@@ -142,16 +148,22 @@ export default function SignupForm() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-6">
-      <Card className="w-full max-w-2xl border border-border/40 shadow-sm rounded-xl bg-card relative">
-        {/* Exit Button */}
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-100 flex items-center justify-center p-6">
+      <Card className="w-full max-w-2xl border border-blue-200/60 shadow-lg rounded-2xl bg-white/80 backdrop-blur-sm relative overflow-hidden">
+        {/* Background Decorative Elements */}
+        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-blue-600"></div>
+        <div className="absolute -top-24 -right-24 w-48 h-48 bg-blue-100 rounded-full opacity-50"></div>
+        <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-blue-200 rounded-full opacity-30"></div>
+
+        {/* Exit Button - FIXED */}
         <button
-          onClick={() => router.push("/")}
-          className="absolute top-6 left-6 w-10 h-10 bg-muted hover:bg-muted/80 rounded-full flex items-center justify-center transition-colors duration-200 z-10"
+          onClick={handleExit}
+          className="absolute top-6 left-6 w-10 h-10 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-full flex items-center justify-center transition-all duration-200 z-50 group cursor-pointer"
           aria-label="Kembali ke beranda"
+          type="button"
         >
           <svg
-            className="w-5 h-5 text-muted-foreground"
+            className="w-5 h-5 text-blue-600 group-hover:text-blue-700"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -165,24 +177,35 @@ export default function SignupForm() {
           </svg>
         </button>
 
-        <CardHeader className="text-center space-y-1 pb-8">
-          <div className="flex justify-center mb-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-primary to-primary/80 rounded-xl flex items-center justify-center">
-              <span className="text-white text-lg">📸</span>
+        <CardHeader className="text-center space-y-1 p-8 pb-4 relative z-10">
+          {/* Logo Section */}
+          <div className="flex justify-center mb-6">
+            <div className="flex items-center space-x-3">
+              <div className="w-24 h-20 bg-gradient-to-br rounded-xl flex items-center justify-center shadow-lg">
+                <Image
+                  src="/logo.png"
+                  alt="Logo"
+                  width={92}
+                  height={32}
+                  className="text-white"
+                />
+              </div>
             </div>
           </div>
-          <CardTitle className="text-2xl font-light text-card-foreground">
+          
+          <CardTitle className="text-2xl font-bold text-blue-900">
             Daftar sebagai Fotografer
           </CardTitle>
-          <CardDescription className="text-muted-foreground">
+          <CardDescription className="text-blue-600/80">
             Buat akun untuk mulai menampilkan karya Anda
           </CardDescription>
         </CardHeader>
-        <CardContent className="px-8">
+
+        <CardContent className="p-8 pt-2 relative z-10">
           <form onSubmit={handleRegister} className="space-y-6">
             {/* Name Field */}
             <div>
-              <label className="text-sm font-medium text-muted-foreground mb-2 block">
+              <label className="text-sm font-medium text-blue-900 mb-2 block">
                 Nama Lengkap *
               </label>
               <Input
@@ -192,8 +215,8 @@ export default function SignupForm() {
                 onChange={handleChange}
                 placeholder="Masukkan nama lengkap Anda"
                 required
-                className={`w-full h-11 border rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary ${
-                  errors.fullName ? "border-red-500" : "border-input"
+                className={`w-full h-11 text-sm border-2 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 bg-white/50 ${
+                  errors.fullName ? "border-red-500" : "border-blue-200"
                 }`}
               />
               {errors.fullName && (
@@ -203,7 +226,7 @@ export default function SignupForm() {
 
             {/* Email Field */}
             <div>
-              <label className="text-sm font-medium text-muted-foreground mb-2 block">
+              <label className="text-sm font-medium text-blue-900 mb-2 block">
                 Email *
               </label>
               <Input
@@ -213,8 +236,8 @@ export default function SignupForm() {
                 onChange={handleChange}
                 placeholder="nama@email.com"
                 required
-                className={`w-full h-11 border rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary ${
-                  errors.email ? "border-red-500" : "border-input"
+                className={`w-full h-11 text-sm border-2 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 bg-white/50 ${
+                  errors.email ? "border-red-500" : "border-blue-200"
                 }`}
               />
               {errors.email && (
@@ -224,7 +247,7 @@ export default function SignupForm() {
 
             {/* WhatsApp Number Field */}
             <div>
-              <label className="text-sm font-medium text-muted-foreground mb-2 block">
+              <label className="text-sm font-medium text-blue-900 mb-2 block">
                 Nomor WhatsApp *
               </label>
               <Input
@@ -234,8 +257,8 @@ export default function SignupForm() {
                 onChange={handleChange}
                 placeholder="+6281234567890"
                 required
-                className={`w-full h-11 border rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary ${
-                  errors.whatsappNumber ? "border-red-500" : "border-input"
+                className={`w-full h-11 text-sm border-2 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 bg-white/50 ${
+                  errors.whatsappNumber ? "border-red-500" : "border-blue-200"
                 }`}
               />
               {errors.whatsappNumber && (
@@ -243,7 +266,7 @@ export default function SignupForm() {
                   {errors.whatsappNumber}
                 </p>
               )}
-              <p className="text-sm text-muted-foreground mt-2">
+              <p className="text-sm text-blue-600/80 mt-2">
                 Kami akan menggunakan ini untuk menghubungi Anda terkait event
                 dan pembaruan.
               </p>
@@ -251,7 +274,7 @@ export default function SignupForm() {
 
             {/* Password Field */}
             <div>
-              <label className="text-sm font-medium text-muted-foreground mb-2 block">
+              <label className="text-sm font-medium text-blue-900 mb-2 block">
                 Password *
               </label>
               <div className="relative">
@@ -263,14 +286,14 @@ export default function SignupForm() {
                   placeholder="Buat password yang kuat"
                   required
                   minLength={6}
-                  className={`w-full h-11 border rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary pr-10 ${
-                    errors.password ? "border-red-500" : "border-input"
+                  className={`w-full h-11 text-sm border-2 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 bg-white/50 pr-12 ${
+                    errors.password ? "border-red-500" : "border-blue-200"
                   }`}
                 />
                 <button
                   type="button"
                   onClick={togglePasswordVisibility}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 transition-colors"
+                  className="absolute inset-y-0 right-0 pr-4 flex items-center text-blue-400 hover:text-blue-600 transition-colors"
                   aria-label={
                     showPassword ? "Sembunyikan password" : "Tampilkan password"
                   }
@@ -315,7 +338,7 @@ export default function SignupForm() {
               {errors.password && (
                 <p className="text-red-500 text-sm mt-1">{errors.password}</p>
               )}
-              <p className="text-sm text-muted-foreground mt-2">
+              <p className="text-sm text-blue-600/80 mt-2">
                 Minimal 6 karakter. Disarankan menggunakan kombinasi huruf,
                 angka, dan simbol.
               </p>
@@ -323,7 +346,7 @@ export default function SignupForm() {
 
             {/* Confirm Password Field */}
             <div>
-              <label className="text-sm font-medium text-muted-foreground mb-2 block">
+              <label className="text-sm font-medium text-blue-900 mb-2 block">
                 Konfirmasi Password *
               </label>
               <div className="relative">
@@ -334,14 +357,14 @@ export default function SignupForm() {
                   onChange={handleChange}
                   placeholder="Ulangi password Anda"
                   required
-                  className={`w-full h-11 border rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary pr-10 ${
-                    errors.confirmPassword ? "border-red-500" : "border-input"
+                  className={`w-full h-11 text-sm border-2 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-200 bg-white/50 pr-12 ${
+                    errors.confirmPassword ? "border-red-500" : "border-blue-200"
                   }`}
                 />
                 <button
                   type="button"
                   onClick={toggleConfirmPasswordVisibility}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 transition-colors"
+                  className="absolute inset-y-0 right-0 pr-4 flex items-center text-blue-400 hover:text-blue-600 transition-colors"
                   aria-label={
                     showConfirmPassword
                       ? "Sembunyikan password"
@@ -398,18 +421,18 @@ export default function SignupForm() {
                 type="checkbox"
                 id="terms"
                 required
-                className="w-4 h-4 text-primary border-border rounded focus:ring-primary/40 mt-0.5"
+                className="w-4 h-4 text-blue-600 border-blue-300 rounded focus:ring-blue-200 focus:ring-2 mt-0.5"
               />
               <label
                 htmlFor="terms"
-                className="text-sm text-muted-foreground font-normal cursor-pointer"
+                className="text-sm text-blue-600/80 font-normal cursor-pointer"
               >
                 Saya menyetujui{" "}
-                <Link href="/terms" className="text-primary hover:underline">
+                <Link href="/terms" className="text-blue-600 hover:text-blue-700 hover:underline font-medium">
                   Syarat & Ketentuan
                 </Link>{" "}
                 dan{" "}
-                <Link href="/privacy" className="text-primary hover:underline">
+                <Link href="/privacy" className="text-blue-600 hover:text-blue-700 hover:underline font-medium">
                   Kebijakan Privasi
                 </Link>
               </label>
@@ -419,22 +442,29 @@ export default function SignupForm() {
             <Button
               type="submit"
               disabled={loading}
-              className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-lg shadow-sm hover:shadow transition-all duration-200"
+              className="w-full h-12 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white text-sm font-semibold rounded-lg shadow-lg shadow-blue-500/25 hover:shadow-blue-600/25 transition-all duration-200 transform hover:scale-[1.02] disabled:opacity-50 disabled:transform-none"
             >
-              {loading ? "Mendaftarkan..." : "Buat Akun"}
+              {loading ? (
+                <div className="flex items-center space-x-2">
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  <span>Mendaftarkan...</span>
+                </div>
+              ) : (
+                "Buat Akun Sekarang"
+              )}
             </Button>
           </form>
 
-          <div className="mt-6 text-center text-sm text-muted-foreground pt-6 border-t border-border">
-            <p>
+          <div className="mt-6 text-center space-y-3 pt-6 border-t border-blue-200">
+            <div className="text-sm text-blue-600/80">
               Sudah punya akun?{" "}
               <Link
                 href="/login"
-                className="font-medium text-primary hover:underline"
+                className="font-semibold text-blue-600 hover:text-blue-700 hover:underline transition-colors"
               >
                 Masuk di sini
               </Link>
-            </p>
+            </div>
           </div>
         </CardContent>
       </Card>
