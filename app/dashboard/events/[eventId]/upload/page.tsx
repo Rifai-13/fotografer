@@ -5,6 +5,8 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
+const MAX_CONCURRENT_UPLOADS = 10;
+
 export default function UploadPhotos({
   params,
 }: {
@@ -46,6 +48,134 @@ export default function UploadPhotos({
     }
   };
 
+  // FUNGSI UTAMA UNTUK MEMPROSES SATU FILE
+  const processSingleFile = async (
+    file: File,
+    index: number,
+    photographerId: string,
+    eventId: string
+  ) => {
+    try {
+      console.log(
+        `🔄 START Uploading ${index + 1}/${selectedFiles.length}: ${file.name}`
+      );
+
+      // 1️⃣ DAPATKAN SIGNED URL DARI API BARU
+      setUploadProgress((prev) => {
+        const newProgress = [...prev];
+        newProgress[index] = 5;
+        return newProgress;
+      });
+
+      const signedUrlResponse = await fetch("/api/get-signed-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileName: file.name,
+          fileType: file.type,
+          eventId: eventId,
+        }),
+      });
+
+      const signedUrlResult = await signedUrlResponse.json();
+
+      if (!signedUrlResponse.ok || !signedUrlResult.signedUrl) {
+        throw new Error(
+          signedUrlResult.error || "Gagal mendapatkan Signed URL dari server"
+        );
+      }
+
+      const { signedUrl, file_path: storagePath } = signedUrlResult;
+
+      setUploadProgress((prev) => {
+        const newProgress = [...prev];
+        newProgress[index] = 20;
+        return newProgress;
+      });
+
+      // 2️⃣ DIRECT UPLOAD MENGGUNAKAN SIGNED URL (PUT Request)
+      const directUploadResponse = await fetch(signedUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Type": file.type,
+        },
+        body: file,
+      });
+
+      if (!directUploadResponse.ok) {
+        const errorText = await directUploadResponse.text();
+        throw new Error(
+          `Direct Upload gagal (Status ${
+            directUploadResponse.status
+          }): ${errorText.substring(0, 100)}...`
+        );
+      }
+
+      setUploadProgress((prev) => {
+        const newProgress = [...prev];
+        newProgress[index] = 75;
+        return newProgress;
+      });
+
+      // 3️⃣ REGISTER METADATA FOTO
+      const { data: urlData } = supabase.storage
+        .from("event-photos")
+        .getPublicUrl(storagePath);
+
+      if (!urlData.publicUrl) {
+        throw new Error("Gagal mendapatkan URL public");
+      }
+
+      const registerResponse = await fetch("/api/register-photo", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          storage_url: urlData.publicUrl,
+          file_path: storagePath,
+          file_name: file.name,
+          file_size: file.size,
+          event_id: eventId,
+          photographer_id: photographerId,
+        }),
+      });
+
+      const registerResult = await registerResponse.json();
+
+      if (!registerResponse.ok) {
+        throw new Error(registerResult.error || "Gagal register photo");
+      }
+
+      setUploadProgress((prev) => {
+        const newProgress = [...prev];
+        newProgress[index] = 100;
+        return newProgress;
+      });
+
+      return {
+        fileName: file.name,
+        success: true,
+        facesIndexed: 0,
+        message: registerResult.message,
+      };
+    } catch (error: any) {
+      console.error(`❌ Upload gagal untuk ${file.name}:`, error);
+
+      setUploadProgress((prev) => {
+        const newProgress = [...prev];
+        newProgress[index] = 100; // Tandai selesai (gagal)
+        return newProgress;
+      });
+
+      return {
+        fileName: file.name,
+        success: false,
+        message: error.message,
+      };
+    }
+  };
+
   // 🚀 FUNGSI UTAMA DIRECT UPLOAD
   const handleUpload = async () => {
     if (selectedFiles.length === 0 || !eventId) return;
@@ -63,138 +193,69 @@ export default function UploadPhotos({
     }
 
     try {
-      const results = [];
+      const filePromises: (() => Promise<any>)[] = [];
+      const finalResults: any[] = [];
 
-      for (let i = 0; i < selectedFiles.length; i++) {
-        const file = selectedFiles[i];
+      // 1. Buat array Promise factories untuk setiap file
+      selectedFiles.forEach((file, index) => {
+        filePromises.push(() =>
+          processSingleFile(file, index, photographerId, eventId)
+        );
+      });
 
-        try {
-          console.log(
-            `🔄 Uploading ${i + 1}/${selectedFiles.length}: ${file.name}`
-          );
+      // 2. Kontrol konkurensi (Antrian)
+      // 💡 FIX 1: Ubah tipe Promise menjadi Promise<any>[]
+      const activePromises: Promise<any>[] = [];
+      let promiseIndex = 0;
 
-          setUploadProgress((prev) => {
-            const newProgress = [...prev];
-            newProgress[i] = 5;
-            return newProgress;
-          });
-
-          // 1️⃣ DAPATKAN SIGNED URL DARI API BARU
-          const signedUrlResponse = await fetch("/api/get-signed-url", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              fileName: file.name,
-              fileType: file.type,
-              eventId: eventId,
-            }),
-          });
-
-          const signedUrlResult = await signedUrlResponse.json();
-
-          if (!signedUrlResponse.ok || !signedUrlResult.signedUrl) {
-            throw new Error(
-              signedUrlResult.error ||
-                "Gagal mendapatkan Signed URL dari server"
-            );
-          }
-
-          const { signedUrl, file_path: storagePath } = signedUrlResult;
-
-          setUploadProgress((prev) => {
-            const newProgress = [...prev];
-            newProgress[i] = 20;
-            return newProgress;
-          });
-
-          // 2️⃣ DIRECT UPLOAD MENGGUNAKAN SIGNED URL (PUT Request)
-          const directUploadResponse = await fetch(signedUrl, {
-            method: "PUT",
-            headers: {
-              "Content-Type": file.type,
-            },
-            body: file,
-          });
-
-          if (!directUploadResponse.ok) {
-            const errorText = await directUploadResponse.text();
-            throw new Error(
-              `Direct Upload gagal (Status ${
-                directUploadResponse.status
-              }): ${errorText.substring(0, 100)}...`
-            );
-          }
-
-          setUploadProgress((prev) => {
-            const newProgress = [...prev];
-            newProgress[i] = 75;
-            return newProgress;
-          });
-
-          // 3️⃣ REGISTER METADATA FOTO
-
-          const { data: urlData } = supabase.storage
-            .from("event-photos")
-            .getPublicUrl(storagePath);
-
-          if (!urlData.publicUrl) {
-            throw new Error("Gagal mendapatkan URL public");
-          }
-
-          const registerResponse = await fetch("/api/register-photo", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              storage_url: urlData.publicUrl,
-              file_path: storagePath,
-              file_name: file.name,
-              file_size: file.size,
-              event_id: eventId,
-              photographer_id: photographerId,
-              // image_bytes TIDAK DIKIRIM
-            }),
-          });
-
-          const registerResult = await registerResponse.json();
-
-          if (!registerResponse.ok) {
-            throw new Error(registerResult.error || "Gagal register photo");
-          }
-
-          setUploadProgress((prev) => {
-            const newProgress = [...prev];
-            newProgress[i] = 100;
-            return newProgress;
-          });
-
-          results.push({
-            fileName: file.name,
-            success: true,
-            facesIndexed: 0,
-            message: registerResult.message,
-          });
-
-          console.log(`✅ Upload berhasil: ${file.name}`, registerResult);
-        } catch (error: any) {
-          console.error(`❌ Upload gagal untuk ${file.name}:`, error);
-          results.push({
-            fileName: file.name,
-            success: false,
-            message: error.message,
-          });
-          setUploadProgress((prev) => {
-            const newProgress = [...prev];
-            newProgress[i] = 100;
-            return newProgress;
-          });
+      const runNext = () => {
+        if (promiseIndex >= filePromises.length) {
+          return; // Semua pekerjaan sudah antri
         }
+
+        const currentPromiseFactory = filePromises[promiseIndex++];
+        const currentPromise = currentPromiseFactory()
+          .then((result) => {
+            finalResults.push(result);
+            // 💡 FIX 2: Jangan gunakan .finally(), gunakan .then() untuk memastikan tipe Promise konsisten
+          })
+          .then(() => {
+            // Setelah selesai (sukses/gagal), hapus dari daftar aktif
+            const index = activePromises.indexOf(currentPromise);
+            if (index !== -1) {
+              activePromises.splice(index, 1);
+            }
+            // Mulai yang berikutnya
+            runNext();
+          });
+
+        // Tambahkan ke daftar yang sedang aktif
+        activePromises.push(currentPromise);
+      };
+
+      // 3. Mulai 10 upload pertama (atau sebanyak yang ada)
+      for (
+        let i = 0;
+        i < MAX_CONCURRENT_UPLOADS && i < filePromises.length;
+        i++
+      ) {
+        runNext();
       }
 
-      setUploadResults(results);
+      // 4. Tunggu sampai semua janji selesai
+      while (activePromises.length > 0 || promiseIndex < filePromises.length) {
+        // 💡 FIX 3: Tambahkan penentuan tipe 'void' secara eksplisit pada resolve()
+        const delayPromise = new Promise<void>((resolve) =>
+          setTimeout(resolve, 50)
+        );
 
-      const successfulUploads = results.filter((r) => r.success);
+        // Kita tunggu Promise.race dari semua yang aktif + delay promise
+        // Menggunakan Promise<any> pada activePromises memastikan Promise.race tidak error
+        await Promise.race(activePromises.concat(delayPromise));
+      }
+      setUploadResults(finalResults);
+
+      const successfulUploads = finalResults.filter((r: any) => r.success);
       const totalSuccessful = successfulUploads.length;
 
       if (totalSuccessful > 0) {
@@ -221,7 +282,6 @@ export default function UploadPhotos({
       setUploading(false);
     }
   };
-
   // ❌ Hapus fungsi convertFileToBase64 di sini
 
   const removeFile = (index: number) => {
@@ -351,56 +411,56 @@ export default function UploadPhotos({
 
           {selectedFiles.length > 0 && (
             <div className="mb-6 border-b pb-4">
-                <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-xl font-semibold">
-                        Foto yang akan diupload ({selectedFiles.length})
-                    </h2>
-                    <div className="flex space-x-3">
-                        <button
-                            onClick={() => {
-                                setSelectedFiles([]);
-                                setUploadResults([]);
-                            }}
-                            disabled={uploading}
-                            className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-semibold">
+                  Foto yang akan diupload ({selectedFiles.length})
+                </h2>
+                <div className="flex space-x-3">
+                  <button
+                    onClick={() => {
+                      setSelectedFiles([]);
+                      setUploadResults([]);
+                    }}
+                    disabled={uploading}
+                    className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Batalkan Semua
+                  </button>
+                  <button
+                    onClick={handleUpload}
+                    disabled={uploading || selectedFiles.length === 0}
+                    className="bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-6 rounded-md disabled:opacity-50 flex items-center"
+                  >
+                    {uploading ? (
+                      <>
+                        <svg
+                          className="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
+                          xmlns="http://www.w3.org/2000/svg"
+                          fill="none"
+                          viewBox="0 0 24 24"
                         >
-                            Batalkan Semua
-                        </button>
-                        <button
-                            onClick={handleUpload}
-                            disabled={uploading || selectedFiles.length === 0}
-                            className="bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-6 rounded-md disabled:opacity-50 flex items-center"
-                        >
-                            {uploading ? (
-                                <>
-                                    <svg
-                                        className="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
-                                        xmlns="http://www.w3.org/2000/svg"
-                                        fill="none"
-                                        viewBox="0 0 24 24"
-                                    >
-                                        <circle
-                                            className="opacity-25"
-                                            cx="12"
-                                            cy="12"
-                                            r="10"
-                                            stroke="currentColor"
-                                            strokeWidth="4"
-                                        ></circle>
-                                        <path
-                                            className="opacity-75"
-                                            fill="currentColor"
-                                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                                        ></path>
-                                    </svg>
-                                    Mengupload...
-                                </>
-                            ) : (
-                                "Upload Semua"
-                            )}
-                        </button>
-                    </div>
+                          <circle
+                            className="opacity-25"
+                            cx="12"
+                            cy="12"
+                            r="10"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                          ></circle>
+                          <path
+                            className="opacity-75"
+                            fill="currentColor"
+                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                          ></path>
+                        </svg>
+                        Mengupload...
+                      </>
+                    ) : (
+                      "Upload Semua"
+                    )}
+                  </button>
                 </div>
+              </div>
             </div>
           )}
 
@@ -449,7 +509,6 @@ export default function UploadPhotos({
                   </div>
                 ))}
               </div>
-              
             </div>
           )}
         </div>
