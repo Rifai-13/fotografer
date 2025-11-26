@@ -194,136 +194,50 @@ export default function DashboardPage() {
     setDeleteModal({ isOpen: true, event });
   };
 
+  // app/dashboard/page.tsx (Fungsi confirmDeleteEvent)
+
   const confirmDeleteEvent = async () => {
     if (!deleteModal.event) return;
+
+    const eventId = deleteModal.event.id;
+
+    // Konfirmasi final kepada user
+    if (
+      !window.confirm(
+        `Apakah Anda yakin ingin menghapus event "${deleteModal.event.name}" secara permanen? Aksi ini tidak dapat dibatalkan.`
+      )
+    ) {
+      return;
+    }
 
     try {
       setDeleting(true);
 
-      const eventId = deleteModal.event.id;
-      const eventName = deleteModal.event.name;
+      // 💡 KRITIS: Panggil API Server Admin yang sudah kita buat
+      const response = await fetch("/api/photos/delete-full", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ eventId: eventId }),
+      });
 
-      console.log(`Starting deletion process for event: ${eventName}`);
+      const result = await response.json();
 
-      // 1. First, get all photos associated with this event
-      const { data: photos, error: photosError } = await supabase
-        .from("photos")
-        .select("id, image_url, file_path, file_name")
-        .eq("event_id", eventId);
-
-      if (photosError) {
-        console.error("Error fetching photos for deletion:", photosError);
-        throw new Error("Gagal mengambil data foto");
-      }
-
-      console.log(`Found ${photos?.length || 0} photos to delete`);
-
-      // 2. Delete photos from storage if they exist
-      if (photos && photos.length > 0) {
-        const filePaths = photos
-          .map((photo) => photo.file_path)
-          .filter(Boolean)
-          .filter((path) => path.startsWith("events/"));
-
-        if (filePaths.length > 0) {
-          const { data: deleteResult, error: storageError } =
-            await supabase.storage.from("event-photos").remove(filePaths);
-
-          if (storageError) {
-            console.error("Error deleting photos from storage:", storageError);
-            console.error("Storage error details:", {
-              message: storageError.message,
-              name: storageError.name,
-              stack: storageError.stack,
-            });
-          } else {
-            console.log("Successfully deleted from storage:", deleteResult);
-          }
-        } else {
-          console.log("No valid file paths found for storage deletion");
-        }
-
-        // 3. Also try to extract file names from image_url and delete them
-        const urlFileNames = photos
-          .map((photo) => {
-            // Extract file name from URL
-            const url = photo.image_url;
-            if (url) {
-              const matches = url.match(/\/([^\/?]+)\?/);
-              return matches ? matches[1] : null;
-            }
-            return null;
-          })
-          .filter(Boolean)
-          .map((fileName) => `events/${eventId}/${fileName}`);
-
-        console.log("File names extracted from URLs:", urlFileNames);
-
-        if (urlFileNames.length > 0) {
-          const { data: urlDeleteResult, error: urlStorageError } =
-            await supabase.storage.from("event-photos").remove(urlFileNames);
-
-          if (urlStorageError) {
-            console.error(
-              "Error deleting photos from storage using URL names:",
-              urlStorageError
-            );
-          } else {
-            console.log(
-              "Successfully deleted from storage using URL names:",
-              urlDeleteResult
-            );
-          }
-        }
-      }
-
-      // 4. Delete photos from database
-      const { error: deletePhotosError } = await supabase
-        .from("photos")
-        .delete()
-        .eq("event_id", eventId);
-
-      if (deletePhotosError) {
-        console.error(
-          "Error deleting photos from database:",
-          deletePhotosError
+      if (!response.ok) {
+        throw new Error(
+          result.error || "Gagal menghapus event melalui server."
         );
-        throw new Error("Gagal menghapus foto dari database");
       }
 
-      console.log("Successfully deleted photos from database");
-
-      // 5. Finally delete the event
-      const { error: deleteEventError } = await supabase
-        .from("events")
-        .delete()
-        .eq("id", eventId);
-
-      if (deleteEventError) {
-        console.error("Error deleting event:", deleteEventError);
-        throw new Error("Gagal menghapus event");
-      }
-
-      console.log("Successfully deleted event from database");
-
-      // 6. Update local state
+      // Jika sukses, update UI
       setEvents((prev) => prev.filter((event) => event.id !== eventId));
-
-      // 7. Refresh storage stats
-      await fetchStorageStats();
-
-      // 8. Close modal and show success
+      await fetchStorageStats(); // Refresh stats
       setDeleteModal({ isOpen: false, event: null });
-
-      // Show success message
-      alert(
-        `Event "${eventName}" berhasil dihapus! ${
-          photos?.length || 0
-        } foto telah dihapus dari storage.`
-      );
+      alert(result.message);
     } catch (err: any) {
-      console.error("Error in delete event:", err);
-      alert(err.message || "Terjadi kesalahan saat menghapus event");
+      console.error("Error during full deletion process:", err);
+      alert(
+        `❌ Error: ${err.message || "Gagal terhubung ke server penghapusan."}`
+      );
     } finally {
       setDeleting(false);
     }

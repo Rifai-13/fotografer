@@ -91,7 +91,7 @@ export default function ManagePhotos({ params }: { params: Promise<{ eventId: st
     
     try {
       // API untuk delete photos
-      const response = await fetch('/api/photos/delete', {
+      const response = await fetch('/api/photos/delete-mass', {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
