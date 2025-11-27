@@ -5,7 +5,7 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-const MAX_CONCURRENT_UPLOADS = 10;
+const MAX_CONCURRENT_UPLOADS = 6;
 
 export default function UploadPhotos({
   params,
