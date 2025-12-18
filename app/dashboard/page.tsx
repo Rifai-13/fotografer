@@ -99,8 +99,11 @@ export default function DashboardPage() {
     }
   };
 
+  // app/dashboard/page.tsx
+
   const fetchEvents = async () => {
     try {
+      // Kita minta Supabase: "Tolong ambil semua event, DAN hitung jumlah foto di dalamnya"
       const { data: eventsData, error: eventsError } = await supabase
         .from("events")
         .select("*, photos(count)")
@@ -113,12 +116,16 @@ export default function DashboardPage() {
       }
 
       const formattedEvents = eventsData.map((event) => {
-        const countData = event.photos as unknown as [{ count: number }];
-        const liveCount = countData?.[0]?.count || 0;
+        // Logic KUNCI: Ambil angka count dari dalam array object yang dikembalikan Supabase
+        // Supabase biasanya mengembalikan: photos: [{ count: 10 }]
+        const photosData = event.photos as unknown as { count: number }[];
+
+        // Kita ambil angkanya. Jika tidak ada/error, set jadi 0.
+        const totalPhotos = photosData?.[0]?.count ?? 0;
 
         return {
           ...event,
-          photo_count: liveCount,
+          photo_count: totalPhotos, // Masukkan angka asli kesini
         };
       });
 
@@ -131,23 +138,25 @@ export default function DashboardPage() {
 
   const fetchStorageStats = async () => {
     try {
-      // Get all photos to calculate total file size
-      const { data: photos, error: photosError } = await supabase
-        .from("photos")
-        .select("file_size");
+      // Panggil function RPC yang kita buat di SQL
+      const { data, error } = await supabase.rpc("get_storage_stats");
 
-      if (photosError) {
-        console.error("Error fetching photos for storage stats:", photosError);
+      if (error) {
+        console.error("Error fetching storage stats:", error);
         return;
       }
 
-      const totalUsage =
-        photos?.reduce((sum, photo) => sum + (photo.file_size || 0), 0) || 0;
-      const totalFiles = photos?.length || 0;
+      // Data dari RPC bentuknya object JSON
+      // Pastikan casting tipenya sesuai
+      const stats = data as { totalBytes: number; totalFiles: number };
 
-      // Calculate usage percentage (assuming 1GB free tier)
-      const storageLimit = 1 * 1024 * 1024 * 1024; // 1GB in bytes
-      const usagePercentage = Math.min((totalUsage / storageLimit) * 100, 100);
+      const totalUsage = stats.totalBytes || 0;
+      const totalFiles = stats.totalFiles || 0;
+
+      // Calculate usage percentage (assuming 1GB free tier limit)
+      // NOTE: Kamu sudah over limit (2.4GB), jadi ini pasti > 100%
+      const storageLimit = 1 * 1024 * 1024 * 1024; // 1GB limit
+      const usagePercentage = (totalUsage / storageLimit) * 100; // Hilangkan Math.min biar kelihatan kalau over
 
       setStorageStats({
         totalUsage,
@@ -155,7 +164,7 @@ export default function DashboardPage() {
         usagePercentage,
       });
     } catch (err) {
-      console.error("Error fetching storage stats:", err);
+      console.error("Error calling storage stats rpc:", err);
     }
   };
 
@@ -455,18 +464,27 @@ export default function DashboardPage() {
         {/* Stats & Actions */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           {/* Storage Usage Card */}
-          <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-2xl p-6 shadow-lg">
-            <div className="flex items-center justify-between">
+          {/* Storage Usage Card */}
+          <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-2xl p-6 shadow-lg overflow-hidden relative">
+            <div className="flex items-center justify-between z-10 relative">
               <div>
-                <p className="text-blue-100 text-sm">Storage Used</p>
-                <p className="text-2xl font-bold">
-                  {formatFileSize(storageStats.totalUsage)}
+                <p className="text-blue-100 text-sm font-medium">
+                  Storage Used
                 </p>
+
+                <div className="flex items-baseline space-x-1 mt-1">
+                  <p className="text-2xl font-bold">
+                    {formatFileSize(storageStats.totalUsage)}
+                  </p>
+                  <span className="text-blue-200 text-sm">/ 1 GB</span>
+                </div>
+
                 <p className="text-blue-100 text-xs mt-1">
-                  {storageStats.totalFiles} files •{" "}
+                  {storageStats.totalFiles.toLocaleString()} files •{" "}
                   {storageStats.usagePercentage.toFixed(1)}% used
                 </p>
               </div>
+
               <div className="bg-white/20 p-3 rounded-xl">
                 <svg
                   className="w-6 h-6"
@@ -483,13 +501,27 @@ export default function DashboardPage() {
                 </svg>
               </div>
             </div>
-            {/* Progress Bar */}
-            <div className="mt-4 w-full bg-white/20 rounded-full h-2">
+
+            {/* Progress Bar Container */}
+            <div className="mt-4 w-full bg-black/20 rounded-full h-2 overflow-hidden">
+              {/* Progress Bar Indicator */}
               <div
-                className="bg-white h-2 rounded-full transition-all duration-300"
-                style={{ width: `${storageStats.usagePercentage}%` }}
+                className={`h-2 rounded-full transition-all duration-500 ${
+                  storageStats.usagePercentage > 100 ? "bg-red-400" : "bg-white"
+                }`}
+                style={{
+                  // Logic Kunci: Pakai Math.min supaya lebar maksimal cuma 100%
+                  width: `${Math.min(storageStats.usagePercentage, 100)}%`,
+                }}
               ></div>
             </div>
+
+            {/* Peringatan jika Over Limit (Opsional, biar user sadar) */}
+            {storageStats.usagePercentage > 100 && (
+              <p className="text-red-200 text-xs mt-2 font-medium animate-pulse">
+                ⚠️ Kuota penyimpanan penuh!
+              </p>
+            )}
           </div>
 
           {/* Total Events Card */}
@@ -553,9 +585,6 @@ export default function DashboardPage() {
         <div className="bg-white/60 backdrop-blur-sm rounded-2xl p-6 border border-white/80 shadow-sm">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-xl font-bold text-gray-900">Events Anda</h2>
-            <div className="text-sm text-gray-600">
-              {events.length} event ditemukan
-            </div>
           </div>
 
           {events.length === 0 ? (
@@ -711,7 +740,7 @@ export default function DashboardPage() {
                             d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
                           />
                         </svg>
-                        {event.photo_count || 0} foto
+                        {event.photo_count} foto
                       </div>
                     </div>
 
