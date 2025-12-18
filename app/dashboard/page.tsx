@@ -155,7 +155,7 @@ export default function DashboardPage() {
 
       // Calculate usage percentage (assuming 1GB free tier limit)
       // NOTE: Kamu sudah over limit (2.4GB), jadi ini pasti > 100%
-      const storageLimit = 1 * 1024 * 1024 * 1024; // 1GB limit
+      const storageLimit = 100 * 1024 * 1024 * 1024; // 1GB limit
       const usagePercentage = (totalUsage / storageLimit) * 100; // Hilangkan Math.min biar kelihatan kalau over
 
       setStorageStats({
