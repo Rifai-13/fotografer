@@ -31,6 +31,7 @@ interface StorageStats {
   totalUsage: number;
   totalFiles: number;
   usagePercentage: number;
+  limitGb: number;
 }
 
 interface Photo {
@@ -49,6 +50,7 @@ export default function DashboardPage() {
     totalUsage: 0,
     totalFiles: 0,
     usagePercentage: 0,
+    limitGb: 100,
   });
   const [deleteModal, setDeleteModal] = useState<{
     isOpen: boolean;
@@ -146,15 +148,11 @@ export default function DashboardPage() {
         return;
       }
 
-      // Data dari RPC bentuknya object JSON
-      // Pastikan casting tipenya sesuai
       const stats = data as { totalBytes: number; totalFiles: number };
-
       const totalUsage = stats.totalBytes || 0;
       const totalFiles = stats.totalFiles || 0;
 
-      // Calculate usage percentage (assuming 1GB free tier limit)
-      // NOTE: Kamu sudah over limit (2.4GB), jadi ini pasti > 100%
+      const currentLimitGb = 100; // Misal limit 100GB
       const storageLimit = 100 * 1024 * 1024 * 1024; // 1GB limit
       const usagePercentage = (totalUsage / storageLimit) * 100;
 
@@ -162,6 +160,7 @@ export default function DashboardPage() {
         totalUsage,
         totalFiles,
         usagePercentage,
+        limitGb: currentLimitGb,
       });
     } catch (err) {
       console.error("Error calling storage stats rpc:", err);
@@ -475,7 +474,7 @@ export default function DashboardPage() {
                   <p className="text-2xl font-bold">
                     {formatFileSize(storageStats.totalUsage)}
                   </p>
-                  <span className="text-blue-200 text-sm">/ 1 GB</span>
+                  <span className="text-blue-200 text-sm">/ {storageStats.limitGb} GB</span>
                 </div>
 
                 <p className="text-blue-100 text-xs mt-1">
