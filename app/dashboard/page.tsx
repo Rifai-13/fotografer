@@ -156,7 +156,7 @@ export default function DashboardPage() {
       // Calculate usage percentage (assuming 1GB free tier limit)
       // NOTE: Kamu sudah over limit (2.4GB), jadi ini pasti > 100%
       const storageLimit = 100 * 1024 * 1024 * 1024; // 1GB limit
-      const usagePercentage = (totalUsage / storageLimit) * 100; // Hilangkan Math.min biar kelihatan kalau over
+      const usagePercentage = (totalUsage / storageLimit) * 100;
 
       setStorageStats({
         totalUsage,
@@ -463,7 +463,6 @@ export default function DashboardPage() {
 
         {/* Stats & Actions */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          {/* Storage Usage Card */}
           {/* Storage Usage Card */}
           <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-2xl p-6 shadow-lg overflow-hidden relative">
             <div className="flex items-center justify-between z-10 relative">
