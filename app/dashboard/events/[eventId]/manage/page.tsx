@@ -188,7 +188,7 @@ export default function ManagePhotos({ params }: { params: Promise<{ eventId: st
             <div className="flex justify-between items-center">
               <h1 className="text-2xl font-bold text-gray-900">Kelola Foto Event</h1>
               <button
-                onClick={() => router.back()}
+                onClick={() => router.push('/dashboard')}
                 className="text-gray-600 hover:text-gray-800 hover:bg-gray-100 py-2 px-4 rounded-md border border-gray-300 transition duration-200"
               >
                 Kembali

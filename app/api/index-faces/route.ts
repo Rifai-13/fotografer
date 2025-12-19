@@ -1,4 +1,3 @@
-// app/api/index-faces/route.ts
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { 
@@ -7,13 +6,17 @@ import {
   CreateCollectionCommand
 } from "@aws-sdk/client-rekognition";
 
-// Inisialisasi Supabase client (ADMIN/SERVICE ROLE)
+// --- KONFIGURASI ---
+// Batasi jumlah foto yang diproses per request agar server tidak timeout (Vercel limit 10-60 detik)
+const BATCH_LIMIT = 50; 
+
+// Inisialisasi Supabase (SERVICE ROLE - Bypass RLS)
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// Inisialisasi AWS Rekognition client
+// Inisialisasi AWS Rekognition
 const rekognitionClient = new RekognitionClient({
   region: process.env.AWS_REGION!,
   credentials: {
@@ -22,109 +25,124 @@ const rekognitionClient = new RekognitionClient({
   },
 });
 
-/**
- * Fungsi helper untuk memastikan Collection di AWS ada.
- */
+// Helper: Pastikan Collection AWS Ada
 async function ensureCollectionExists(collectionId: string) {
   try {
     const createCommand = new CreateCollectionCommand({ CollectionId: collectionId });
     await rekognitionClient.send(createCommand);
-    console.log(`Collection ${collectionId} created.`);
+    // console.log(`Collection ${collectionId} created/checked.`);
   } catch (error: any) {
-    if (error.name === 'ResourceAlreadyExistsException') {
-      console.log(`Collection ${collectionId} already exists.`);
-    } else {
-      console.error("Error ensuring collection exists:", error);
+    if (error.name !== 'ResourceAlreadyExistsException') {
+      console.error("Error creating collection:", error);
       throw error;
     }
   }
 }
 
-export async function POST(request: Request) {
+// Helper: Proses 1 Foto
+async function processSinglePhoto(photo: any, collectionId: string) {
   try {
-    const payload = await request.json();
-
-    // ========= LOGIKA UNTUK DETEKSI WEBHOOK =========
-    let eventId: string, photoId: string, filePath: string;
-
-    if (payload.type === 'INSERT' && payload.record) {
-      // Ini adalah payload dari Supabase Webhook
-      console.log('Processing Supabase INSERT webhook...');
-      eventId = payload.record.event_id;
-      photoId = payload.record.id;
-      filePath = payload.record.file_path;
-    } else {
-      // Ini adalah payload manual (dari /api/setup-event)
-      console.log('Processing manual API call...');
-      eventId = payload.eventId;
-      photoId = payload.photoId;
-      filePath = payload.filePath; 
-    }
-    // ================================================
-
-    if (!eventId || !photoId || !filePath) {
-      return NextResponse.json(
-        { error: 'eventId, photoId, dan filePath diperlukan' },
-        { status: 400 }
-      );
-    }
-
-    const collectionId = `event-${eventId}`;
-
-    // 1. Pastikan Collection-nya ada
-    await ensureCollectionExists(collectionId);
-
-    // 2. Download foto dari Supabase Storage
-    console.log(`Downloading photo: ${filePath}`);
+    // 1. Download dari Supabase Storage
+    // ⚠️ Pastikan nama bucket sesuai ('event-photos')
     const { data: photoData, error: storageError } = await supabase.storage
-      .from('event-photos') // Ganti jika nama bucket-mu beda
-      .download(filePath);
+      .from('event-photos') 
+      .download(photo.file_path);
 
-    if (storageError) {
-      console.error('Error downloading photo from Supabase:', storageError);
-      return NextResponse.json({ error: 'Gagal download foto dari storage' }, { status: 500 });
-    }
+    if (storageError) throw new Error(`Storage download fail: ${storageError.message}`);
 
-    // 3. Ubah foto jadi Buffer
+    // 2. Convert ke Buffer
     const arrayBuffer = await photoData.arrayBuffer();
     const imageBytes = Buffer.from(arrayBuffer);
 
-    // 4. Buat Perintah "IndexFaces"
+    // 3. Kirim ke AWS Rekognition
     const command = new IndexFacesCommand({
       CollectionId: collectionId,
       Image: { Bytes: imageBytes },
-      ExternalImageId: photoId,
+      ExternalImageId: photo.id, // ID Foto dari DB
       MaxFaces: 10,
       DetectionAttributes: ["DEFAULT"],
     });
 
     const response = await rekognitionClient.send(command);
-    const indexedFacesCount = response.FaceRecords?.length || 0;
-    console.log(`Successfully indexed ${indexedFacesCount} faces for photo ${photoId}`);
+    const facesCount = response.FaceRecords?.length || 0;
 
-    // 5. Update kolom 'faces_indexed' dan 'indexed_at' di database
-    const { error: updateError } = await supabase
+    // 4. Update Database (PENTING: Set is_processed = TRUE)
+    await supabase
       .from('photos')
       .update({ 
-          faces_indexed: indexedFacesCount,
-          indexed_at: new Date().toISOString()
+          faces_indexed: facesCount,
+          indexed_at: new Date().toISOString(),
+          is_processed: true // ✅ TANDAI SUDAH SELESAI
       })
-      .eq('id', photoId);
+      .eq('id', photo.id);
 
-    if (updateError) {
-      console.error('Error updating photo metadata:', updateError);
+    return { success: true, id: photo.id, faces: facesCount };
+
+  } catch (error: any) {
+    console.error(`❌ Gagal foto ID ${photo.id}:`, error.message);
+    // Tetap update status processed walau gagal, atau beri flag error (opsional)
+    // Disini kita biarkan false agar bisa diretry nanti, tapi hati-hati infinite loop.
+    return { success: false, id: photo.id, error: error.message };
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json();
+    const { eventId } = body;
+
+    if (!eventId) {
+      return NextResponse.json({ error: 'Event ID wajib ada' }, { status: 400 });
     }
 
+    // 1. Pastikan Collection AWS siap
+    const collectionId = `event-${eventId}`;
+    await ensureCollectionExists(collectionId);
+
+    // 2. AMBIL FOTO YANG BELUM DIPROSES (Batching)
+    // Kita ambil max 50 foto dulu agar tidak timeout.
+    // Nanti API ini bisa dipanggil berulang-ulang (Recursive/Cron) jika mau full otomatis.
+    const { data: photos, error: dbError } = await supabase
+      .from('photos')
+      .select('*')
+      .eq('event_id', eventId)
+      .eq('is_processed', false) // 🔥 HANYA YANG BELUM DIPROSES
+      .limit(BATCH_LIMIT);
+
+    if (dbError) throw dbError;
+
+    if (!photos || photos.length === 0) {
+      return NextResponse.json({ message: "Semua foto sudah terproses / Tidak ada foto baru." });
+    }
+
+    console.log(`🤖 Mulai memproses ${photos.length} foto untuk Event ${eventId}...`);
+
+    // 3. LOOPING PROSES (Parallel dengan Promise.all)
+    // Kita jalankan semua sekaligus agar cepat
+    const results = await Promise.all(
+      photos.map(photo => processSinglePhoto(photo, collectionId))
+    );
+
+    const successCount = results.filter(r => r.success).length;
+
+    console.log(`✅ Batch selesai. Sukses: ${successCount}, Gagal: ${results.length - successCount}`);
+
+    // 4. Cek apakah masih ada sisa?
+    // Jika user upload 1600, batch ini cuma kerjain 50.
+    // Di sistem Production yang canggih, kita bisa panggil API ini lagi (rekursif) di sini.
+    // Tapi untuk sekarang, return success dulu.
+    
     return NextResponse.json({
       success: true,
-      indexedFaces: indexedFacesCount,
-      photoId: photoId,
+      processed: results.length,
+      successCount,
+      remaining: "Cek DB untuk sisa antrian"
     });
 
   } catch (error: any) {
-    console.error('Indexing error:', error.message);
+    console.error('System Error:', error);
     return NextResponse.json(
-      { error: 'Gagal mengindeks wajah: ' + error.message },
+      { error: error.message },
       { status: 500 }
     );
   }
