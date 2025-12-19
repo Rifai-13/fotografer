@@ -1,25 +1,47 @@
-// app/results/page.tsx
+// app/results/page.tsx - FIXED: TOMBOL DOWNLOAD SELALU MUNCUL
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Image from "next/image";
 
+// Interface untuk data hasil match
 interface Match {
   photo_id: string;
   image_url: string;
   similarity: number;
-  bounding_box: any;
-  face_id: string;
   confidence: number;
 }
 
-export default function ResultsPage() {
+// Komponen utama dibungkus Suspense agar aman di Next.js
+export default function ResultsPageWrapper() {
+  return (
+    <Suspense fallback={<LoadingScreen />}>
+      <ResultsPageContent />
+    </Suspense>
+  );
+}
+
+// Komponen Loading terpisah
+function LoadingScreen() {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+        <p className="text-gray-600 font-medium">Sedang memuat hasil...</p>
+      </div>
+    </div>
+  );
+}
+
+function ResultsPageContent() {
   const [matches, setMatches] = useState<Match[]>([]);
-  const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState<string | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
+  const eventId = searchParams.get("eventId");
 
+  // Parse data matches dari URL
   useEffect(() => {
     const matchesParam = searchParams.get("matches");
     if (matchesParam) {
@@ -30,9 +52,9 @@ export default function ResultsPage() {
         console.error("Error parsing matches:", error);
       }
     }
-    setLoading(false);
   }, [searchParams]);
 
+  // Fungsi Download Gambar
   const handleDownload = async (imageUrl: string, photoId: string) => {
     setDownloading(photoId);
     try {
@@ -42,16 +64,11 @@ export default function ResultsPage() {
 
       const link = document.createElement("a");
       link.href = url;
-
-      // Extract filename from URL or use photo_id
-      const filename = `foto-${photoId}.jpg`;
-
-      link.download = filename;
+      // Nama file saat didownload
+      link.download = `foto-${eventId?.slice(0, 5)}-${photoId.slice(0, 5)}.jpg`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-
-      // Clean up the URL object
       window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error("Error downloading image:", error);
@@ -61,25 +78,14 @@ export default function ResultsPage() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Memuat hasil...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 font-sans">
       {/* Header */}
-      <div className="bg-white/80 backdrop-blur-sm border-b border-gray-200/60">
+      <div className="bg-white/80 backdrop-blur-md border-b border-gray-200/60 sticky top-0 z-20">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
             <div className="flex items-center space-x-3">
-              <div className="bg-gradient-to-r from-green-500 to-green-600 p-2 rounded-lg">
+              <div className="bg-gradient-to-tr from-green-400 to-blue-500 p-2 rounded-xl shadow-sm">
                 <svg
                   className="w-6 h-6 text-white"
                   fill="none"
@@ -90,25 +96,25 @@ export default function ResultsPage() {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     strokeWidth={2}
-                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                    d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
                   />
                 </svg>
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-gray-900">
+                <h1 className="text-xl sm:text-2xl font-bold text-gray-900 tracking-tight">
                   Hasil Pencarian
                 </h1>
-                <p className="text-sm text-gray-600">
-                  Foto-foto yang cocok dengan wajah Anda
+                <p className="text-xs sm:text-sm text-gray-500">
+                  Foto yang cocok dengan wajah Anda
                 </p>
               </div>
             </div>
             <button
-              onClick={() => router.push("/scan")}
-              className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2 px-4 rounded-lg transition duration-200 flex items-center space-x-2"
+              onClick={() => router.push(`/scan?eventId=${eventId || ""}`)}
+              className="group bg-white hover:bg-gray-50 text-gray-700 font-medium py-2 px-4 rounded-xl border border-gray-200 transition-all duration-200 flex items-center space-x-2 shadow-sm hover:shadow"
             >
               <svg
-                className="w-4 h-4"
+                className="w-4 h-4 group-hover:-translate-x-1 transition-transform"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -126,119 +132,153 @@ export default function ResultsPage() {
         </div>
       </div>
 
-      {/* Results */}
+      {/* Content Results */}
       <div className="max-w-6xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
-        <div className="bg-white/60 backdrop-blur-sm rounded-2xl p-8 border border-white/80 shadow-sm">
-          {matches.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="bg-gradient-to-br from-gray-100 to-gray-200 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg
-                  className="w-10 h-10 text-gray-400"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
-                </svg>
-              </div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">
-                Tidak Ada Foto yang Ditemukan
-              </h3>
-              <p className="text-gray-600 mb-6">
-                Maaf, tidak ada foto yang cocok dengan wajah Anda ditemukan di
-                event ini.
-              </p>
-              <button
-                onClick={() => router.push("/scan")}
-                className="bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-6 rounded-lg transition duration-200"
+        {matches.length === 0 ? (
+          // Tampilan jika tidak ada hasil
+          <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-12 border border-white/50 shadow-xl text-center max-w-2xl mx-auto">
+            <div className="bg-gray-100 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner">
+              <svg
+                className="w-12 h-12 text-gray-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
               >
-                Coba Lagi
-              </button>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
             </div>
-          ) : (
-            <>
-              <div className="text-center mb-8">
-                <h2 className="text-2xl font-bold text-gray-900 mb-2">
-                  🎉 Ditemukan {matches.length} Foto!
-                </h2>
-                <p className="text-gray-600">
-                  Berikut adalah foto-foto Anda yang berhasil dikenali oleh AI
-                </p>
+            <h3 className="text-2xl font-bold text-gray-900 mb-3">
+              Tidak Ada Foto Ditemukan
+            </h3>
+            <p className="text-gray-600 mb-8 leading-relaxed">
+              Kami tidak menemukan foto yang cocok dengan wajah Anda di event
+              ini. Coba gunakan foto selfie dengan pencahayaan yang lebih baik.
+            </p>
+            <button
+              onClick={() => router.push(`/scan?eventId=${eventId || ""}`)}
+              className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold py-3 px-8 rounded-xl transition duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+            >
+              Coba Selfie Lagi
+            </button>
+          </div>
+        ) : (
+          // Tampilan jika ada hasil
+          <>
+            <div className="text-center mb-10">
+              <div className="inline-block bg-green-100 text-green-800 px-4 py-2 rounded-full text-sm font-bold mb-4 shadow-sm">
+                🎉 Berhasil
               </div>
+              <h2 className="text-3xl sm:text-4xl font-extrabold text-gray-900 mb-4 leading-tight">
+                Ditemukan{" "}
+                <span className="text-blue-600">{matches.length}</span> Foto
+                Anda!
+              </h2>
+              <p className="text-gray-600 text-lg max-w-2xl mx-auto">
+                Berikut adalah koleksi foto terbaik yang berhasil dikenali oleh
+                AI
+              </p>
+            </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {matches.map((match, index) => (
+            {/* GRID FOTO */}
+            <div
+              className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6"
+              style={{ gridAutoRows: "1fr" }}
+            >
+              {matches.map((match, index) => {
+                let badgeColor = "bg-green-500";
+                if (match.similarity < 95) badgeColor = "bg-yellow-500";
+                if (match.similarity < 90) badgeColor = "bg-orange-500";
+
+                return (
                   <div
                     key={match.photo_id}
-                    className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm"
+                    className="relative aspect-square rounded-2xl overflow-hidden shadow-md hover:shadow-xl transition-all duration-300 group bg-gray-200"
                   >
-                    <div className="aspect-square bg-gray-100 relative">
-                      <img
-                        src={match.image_url}
-                        alt={`Foto ${index + 1}`}
-                        className="w-full h-full object-cover"
-                      />
-                      <div className="absolute top-2 right-2 bg-green-500 text-white text-xs font-medium px-2 py-1 rounded-full">
-                        {match.similarity.toFixed(1)}% match
-                      </div>
-                      <button
-                        onClick={() =>
-                          handleDownload(match.image_url, match.photo_id)
+                    {/* Gambar Utama */}
+                    <Image
+                      src={match.image_url}
+                      alt={`Foto ${index + 1}`}
+                      fill
+                      sizes="(max-width: 768px) 50vw, (max-width: 1200px) 33vw, 25vw"
+                      className="object-cover transition-transform duration-500"
+                      loading="lazy"
+                    />
+
+                    {/* Gradient Overlay (Selalu halus di bawah agar tombol terlihat) */}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-60"></div>
+
+                    {/* Badge Persentase */}
+                    <div
+                      className={`absolute top-3 left-3 ${badgeColor} text-white text-[10px] sm:text-xs font-bold px-2 py-1 sm:px-3 sm:py-1.5 rounded-full shadow-sm backdrop-blur-sm bg-opacity-90 z-10`}
+                    >
+                      {match.similarity.toFixed(1)}% Match
+                    </div>
+
+                    {/* Tombol Download (SELALU MUNCUL) */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDownload(match.image_url, match.photo_id);
+                      }}
+                      disabled={downloading === match.photo_id}
+                      className={`
+                        absolute bottom-3 right-3 p-2 sm:p-3 rounded-full shadow-lg transition-all duration-200 z-10
+                        ${
+                          downloading === match.photo_id
+                            ? "bg-gray-100 cursor-wait"
+                            : "bg-white text-gray-700 hover:text-blue-600 active:scale-95"
                         }
-                        disabled={downloading === match.photo_id}
-                        className="absolute bottom-2 right-2 bg-white/90 hover:bg-white text-gray-700 hover:text-blue-600 p-2 rounded-full shadow-md transition-all duration-200 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
-                        title="Download Foto"
-                      >
-                        {downloading === match.photo_id ? (
-                          <svg
-                            className="w-5 h-5 animate-spin"
-                            fill="none"
+                      `}
+                      title="Download Foto"
+                    >
+                      {downloading === match.photo_id ? (
+                        <svg
+                          className="w-5 h-5 sm:w-6 sm:h-6 animate-spin text-blue-600"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                        >
+                          <circle
+                            className="opacity-25"
+                            cx="12"
+                            cy="12"
+                            r="10"
                             stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M12 2v4m0 12v4m0 0l-5-5m5 5l5-5M12 6a6 6 0 100 12 6 6 0 000-12z"
-                            />
-                          </svg>
-                        ) : (
-                          <svg
-                            className="w-5 h-5"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                            />
-                          </svg>
-                        )}
-                      </button>
-                    </div>
-                    <div className="p-4">
-                      <div className="flex justify-between items-center text-sm text-gray-600">
-                        <span>Kecocokan:</span>
-                        <span className="font-medium">
-                          {match.similarity.toFixed(1)}%
-                        </span>
-                      </div>
-                    </div>
+                            strokeWidth="4"
+                          ></circle>
+                          <path
+                            className="opacity-75"
+                            fill="currentColor"
+                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                          ></path>
+                        </svg>
+                      ) : (
+                        // Ikon Download
+                        <svg
+                          className="w-3 h-3 sm:w-4 sm:h-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                          />
+                        </svg>
+                      )}
+                    </button>
                   </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+                );
+              })}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
