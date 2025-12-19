@@ -1,16 +1,12 @@
 // app/api/search-faces/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js"; // ⚠️ Import dari library langsung
 import {
   RekognitionClient,
   SearchFacesByImageCommand,
 } from "@aws-sdk/client-rekognition";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
-
+// 1. Setup AWS Client
 const rekognitionClient = new RekognitionClient({
   region: process.env.AWS_REGION!,
   credentials: {
@@ -21,149 +17,125 @@ const rekognitionClient = new RekognitionClient({
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { eventId, image } = body;
+    const data = await request.formData();
+    const file = data.get("file") as File;
+    const eventId = data.get("eventId") as string;
 
-    if (!eventId || !image) {
+    if (!file || !eventId) {
       return NextResponse.json(
-        { error: "Event ID dan gambar diperlukan" },
+        { error: "File dan Event ID diperlukan" },
         { status: 400 }
       );
     }
 
-    console.log("Starting face search for event:", eventId);
+    // 2. Setup Supabase ADMIN MODE (Bypass RLS & Auth Error)
+    // Kita pakai Service Role agar tamu yang tidak login tetap bisa search foto
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!, // 🔥 KUNCI SAKTI (Pastikan ada di .env)
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+        },
+      }
+    );
 
-    const imageBytes = Buffer.from(image, "base64");
+    // 3. Convert File ke Buffer untuk AWS
+    const buffer = Buffer.from(await file.arrayBuffer());
+
+    console.log(`Starting face search for event: ${eventId}`);
+
+    // 4. Kirim ke AWS Rekognition
     const collectionId = `event-${eventId}`;
 
-    try {
-      const command = new SearchFacesByImageCommand({
-        CollectionId: collectionId,
-        Image: { Bytes: imageBytes },
-        FaceMatchThreshold: 70,
-        MaxFaces: 100,
-      });
+    const command = new SearchFacesByImageCommand({
+      CollectionId: collectionId,
+      Image: { Bytes: buffer },
+      MaxFaces: 100,      // Cari sampai 100 wajah mirip
+      FaceMatchThreshold: 80, // Tingkat kemiripan minimal 80%
+    });
 
-      const response = await rekognitionClient.send(command);
+    const response = await rekognitionClient.send(command);
 
-      console.log("AWS Rekognition response:", {
-        faceMatches: response.FaceMatches?.length,
-        searchedFace: response.SearchedFaceConfidence,
-      });
+    console.log(
+      "AWS Rekognition response:",
+      JSON.stringify(
+        {
+          faceMatches: response.FaceMatches?.length,
+          searchedFace: response.SearchedFaceConfidence,
+        },
+        null,
+        2
+      )
+    );
 
-      if (!response.FaceMatches || response.FaceMatches.length === 0) {
-        console.log("No face matches found from Rekognition.");
-        return NextResponse.json({
-          success: true,
-          matches: [],
-          total_matches: 0,
-          searched_face_confidence: response.SearchedFaceConfidence,
-        });
-      }
+    if (!response.FaceMatches || response.FaceMatches.length === 0) {
+      return NextResponse.json({ matches: [] });
+    }
 
-      // 1. Kumpulkan semua ExternalImageId dari hasil Rekognition
-      const rekognitionMatchData = new Map<
-        string,
-        { similarity: number; boundingBox: any; faceId: string }
-      >();
-      for (const match of response.FaceMatches) {
-        if (match.Face?.ExternalImageId && match.Similarity) {
-          const photoId = match.Face.ExternalImageId;
-          // Simpan data match terbaik (tertinggi similarity) jika ada duplikat ExternalImageId
-          if (
-            !rekognitionMatchData.has(photoId) ||
-            match.Similarity > rekognitionMatchData.get(photoId)!.similarity
-          ) {
-            rekognitionMatchData.set(photoId, {
-              similarity: match.Similarity,
-              boundingBox: match.Face.BoundingBox || {},
-              faceId: match.Face.FaceId || "",
-            });
-          }
-        }
-      }
+    // 5. Ambil ID Foto dari hasil AWS
+    // Saat indexing, kita set ExternalImageId = photo.id
+    const faceMatches = response.FaceMatches;
+    
+    // Kumpulkan semua Photo ID yang ditemukan AWS
+    const photoIds = faceMatches
+      .map((match) => match.Face?.ExternalImageId)
+      .filter((id): id is string => !!id); // Hapus yang undefined
 
-      const uniquePhotoIds = Array.from(rekognitionMatchData.keys());
+    if (photoIds.length === 0) {
+      console.log("No valid ExternalImageId found in AWS response");
+      return NextResponse.json({ matches: [] });
+    }
 
-      if (uniquePhotoIds.length === 0) {
-        console.log("No unique photo IDs extracted from Rekognition matches.");
-        return NextResponse.json({
-          success: true,
-          matches: [],
-          total_matches: 0,
-          searched_face_confidence: response.SearchedFaceConfidence,
-        });
-      }
+    // 6. Ambil Data Detail Foto dari Database Supabase
+    // Menggunakan Admin Client, jadi pasti dapat datanya walau token user error
+    const { data: photos, error } = await supabase
+      .from("photos")
+      .select("*")
+      .in("id", photoIds);
 
-      // 2. Ambil data foto dari Supabase SATU KALI SAJA berdasarkan uniquePhotoIds
-      const { data: photos, error: photoError } = await supabase
-        .from("photos")
-        .select("id, image_url") // Pastikan mengambil image_url
-        .in("id", uniquePhotoIds);
+    if (error) {
+      console.error("Supabase Error:", error);
+      throw error;
+    }
 
-      if (photoError) {
-        console.error(
-          "Error fetching matched photos from Supabase:",
-          photoError.message
-        );
-        throw new Error("Gagal mengambil data foto yang cocok dari database");
-      }
+    console.log(
+      `Found ${photos?.length || 0} final matches after merging and filtering.`
+    );
 
-      // 3. Gabungkan data dari Rekognition dan Supabase
-      const finalMatches = photos
-        .map((photo) => {
-          const matchData = rekognitionMatchData.get(photo.id);
-          if (!matchData) {
-            // Seharusnya tidak terjadi, tapi untuk safety
-            console.warn(
-              `Photo ID ${photo.id} found in Supabase but not in Rekognition matches.`
-            );
-            return null;
-          }
-
-          return {
-            photo_id: photo.id,
-            image_url: photo.image_url,
-            similarity: matchData.similarity,
-            bounding_box: matchData.boundingBox,
-            face_id: matchData.faceId,
-            confidence: response.SearchedFaceConfidence,
-          };
-        })
-        .filter(Boolean);
-
-      // Sort matches by similarity (highest first)
-      finalMatches.sort((a, b) => b!.similarity - a!.similarity);
-
-      console.log(
-        `Found ${finalMatches.length} final matches after merging and filtering.`
+    // 7. Gabungkan Data AWS (Score Kemiripan) dengan Data Database (URL Gambar)
+    const results = photos?.map((photo) => {
+      // Cari data match dari AWS untuk foto ini
+      const awsMatch = faceMatches.find(
+        (m) => m.Face?.ExternalImageId === photo.id
       );
 
-      return NextResponse.json({
-        success: true,
-        matches: finalMatches,
-        total_matches: finalMatches.length,
-        searched_face_confidence: response.SearchedFaceConfidence,
-      });
-    } catch (awsError: any) {
-      if (awsError.name === "ResourceNotFoundException") {
-        return NextResponse.json(
-          {
-            status: "NO_COLLECTION",
-            message: "Collection untuk event ini belum dibuat atau kosong",
-            // code: 'COLLECTION_NOT_FOUND',
-            matches: [],
-          },
-          { status: 200 }
-        );
-      }
-      console.error("AWS Rekognition service error:", awsError.message);
-      throw awsError;
-    }
+      return {
+        photo_id: photo.id,
+        image_url: photo.storage_url || photo.image_url, // Pakai public URL
+        similarity: awsMatch?.Similarity || 0, // % Kemiripan
+        confidence: awsMatch?.Face?.Confidence || 0,
+        face_id: awsMatch?.Face?.FaceId,
+        bounding_box: awsMatch?.Face?.BoundingBox,
+      };
+    });
+
+    // Urutkan dari yang paling mirip
+    results?.sort((a, b) => b.similarity - a.similarity);
+
+    return NextResponse.json({ matches: results });
+
   } catch (error: any) {
-    console.error("Face search API general error:", error.message);
+    console.error("Search error details:", error);
+    
+    // Handling error jika Collection belum dibuat (Event baru belum ada foto terindex)
+    if (error.name === 'ResourceNotFoundException') {
+        return NextResponse.json({ matches: [] }); // Anggap kosong, jangan error 500
+    }
+
     return NextResponse.json(
-      { error: "Terjadi kesalahan umum saat mencari wajah: " + error.message },
+      { error: error.message || "Internal Server Error" },
       { status: 500 }
     );
   }
