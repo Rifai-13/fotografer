@@ -40,7 +40,7 @@ export async function POST(request: Request) {
       const command = new SearchFacesByImageCommand({
         CollectionId: collectionId,
         Image: { Bytes: imageBytes },
-        FaceMatchThreshold: 80,
+        FaceMatchThreshold: 70,
         MaxFaces: 100,
       });
 
