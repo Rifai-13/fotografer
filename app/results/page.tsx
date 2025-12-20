@@ -1,4 +1,4 @@
-// app/results/page.tsx - FIXED: TOMBOL DOWNLOAD SELALU MUNCUL
+// app/results/page.tsx
 "use client";
 
 import { useState, useEffect, Suspense } from "react";
@@ -37,6 +37,10 @@ function LoadingScreen() {
 function ResultsPageContent() {
   const [matches, setMatches] = useState<Match[]>([]);
   const [downloading, setDownloading] = useState<string | null>(null);
+  
+  // STATE BARU: Untuk menyimpan foto yang sedang dibuka (di-klik)
+  const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
+
   const router = useRouter();
   const searchParams = useSearchParams();
   const eventId = searchParams.get("eventId");
@@ -179,8 +183,7 @@ function ResultsPageContent() {
                 Anda!
               </h2>
               <p className="text-gray-600 text-lg max-w-2xl mx-auto">
-                Berikut adalah koleksi foto terbaik yang berhasil dikenali oleh
-                AI
+                Klik pada foto untuk melihat ukuran penuh
               </p>
             </div>
 
@@ -197,7 +200,9 @@ function ResultsPageContent() {
                 return (
                   <div
                     key={match.photo_id}
-                    className="relative aspect-square rounded-2xl overflow-hidden shadow-md hover:shadow-xl transition-all duration-300 group bg-gray-200"
+                    // TAMBAHAN: onClick untuk membuka modal
+                    onClick={() => setSelectedMatch(match)}
+                    className="relative aspect-square rounded-2xl overflow-hidden shadow-md hover:shadow-xl transition-all duration-300 group bg-gray-200 cursor-pointer ring-4 ring-transparent hover:ring-blue-200"
                   >
                     {/* Gambar Utama */}
                     <Image
@@ -205,11 +210,11 @@ function ResultsPageContent() {
                       alt={`Foto ${index + 1}`}
                       fill
                       sizes="(max-width: 768px) 50vw, (max-width: 1200px) 33vw, 25vw"
-                      className="object-cover transition-transform duration-500"
+                      className="object-cover transition-transform duration-500 group-hover:scale-105"
                       loading="lazy"
                     />
 
-                    {/* Gradient Overlay (Selalu halus di bawah agar tombol terlihat) */}
+                    {/* Gradient Overlay */}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-60"></div>
 
                     {/* Badge Persentase */}
@@ -219,10 +224,10 @@ function ResultsPageContent() {
                       {match.similarity.toFixed(1)}% Match
                     </div>
 
-                    {/* Tombol Download (SELALU MUNCUL) */}
+                    {/* Tombol Download (Mini) */}
                     <button
                       onClick={(e) => {
-                        e.stopPropagation();
+                        e.stopPropagation(); // Biar gak buka modal pas klik download
                         handleDownload(match.image_url, match.photo_id);
                       }}
                       disabled={downloading === match.photo_id}
@@ -257,7 +262,6 @@ function ResultsPageContent() {
                           ></path>
                         </svg>
                       ) : (
-                        // Ikon Download
                         <svg
                           className="w-3 h-3 sm:w-4 sm:h-4"
                           fill="none"
@@ -280,6 +284,74 @@ function ResultsPageContent() {
           </>
         )}
       </div>
+
+      {/* --- FITUR BARU: MODAL / LIGHTBOX FOTO --- */}
+      {selectedMatch && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+          onClick={() => setSelectedMatch(null)} // Klik background untuk tutup
+        >
+          {/* Container Modal */}
+          <div 
+            className="relative w-full max-w-4xl max-h-[90vh] flex flex-col items-center"
+            onClick={(e) => e.stopPropagation()} // Biar klik foto ga nutup modal
+          >
+            
+            {/* Tombol Close (Pojok Kanan Atas) */}
+            <button
+              onClick={() => setSelectedMatch(null)}
+              className="absolute -top-12 right-0 text-white hover:text-gray-300 transition-colors p-2"
+            >
+              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+
+            {/* Foto Full Size */}
+            <div className="relative w-full h-[60vh] sm:h-[75vh] bg-black rounded-lg overflow-hidden shadow-2xl">
+              <Image
+                src={selectedMatch.image_url}
+                alt="Full preview"
+                fill
+                className="object-contain" // Biar foto ga kepotong (fit to screen)
+                priority
+              />
+            </div>
+
+            {/* Tombol Download Besar di Bawah */}
+            <div className="mt-6 flex gap-4">
+              <button
+                onClick={() => setSelectedMatch(null)}
+                className="px-6 py-3 rounded-xl bg-gray-700 text-white font-medium hover:bg-gray-600 transition-colors"
+              >
+                Tutup
+              </button>
+              
+              <button
+                onClick={() => handleDownload(selectedMatch.image_url, selectedMatch.photo_id)}
+                disabled={downloading === selectedMatch.photo_id}
+                className="px-8 py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 transition-colors flex items-center gap-2 shadow-lg disabled:opacity-50"
+              >
+                {downloading === selectedMatch.photo_id ? (
+                   <>
+                     <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                     Mengunduh...
+                   </>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Download Foto HD
+                  </>
+                )}
+              </button>
+            </div>
+            
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
