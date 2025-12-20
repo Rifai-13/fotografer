@@ -226,21 +226,30 @@ export default function DashboardPage() {
       {/* Main Content */}
       <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
         
+        {/* ✨ WELCOME SECTION (KEMBALI) ✨ */}
+        <div className="mb-8">
+          <div className="bg-white/60 backdrop-blur-sm rounded-2xl p-6 border border-white/80 shadow-sm">
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">
+              Selamat datang, {getUserName()}! 👋
+            </h2>
+            <p className="text-gray-600">
+              Kelola event dan foto-foto Anda dengan mudah dalam satu platform.
+            </p>
+          </div>
+        </div>
+
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-           {/* Storage Card (FIXED: FILE COUNT ADDED) */}
+           {/* Storage Card */}
            <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-2xl p-6 shadow-lg">
               <p className="text-blue-100 text-sm">Storage Used</p>
               <div className="flex items-baseline space-x-1 mt-1">
                  <p className="text-2xl font-bold">{formatFileSize(storageStats.totalUsage)}</p>
                  <span className="text-blue-200 text-sm">/ {storageStats.limitGb} GB</span>
               </div>
-              
-              {/* Ini yang saya kembalikan: Jumlah Files */}
               <p className="text-blue-100 text-xs mt-1">
                  {storageStats.totalFiles.toLocaleString()} files • {storageStats.usagePercentage.toFixed(1)}% used
               </p>
-
               <div className="mt-4 w-full bg-black/20 rounded-full h-2 overflow-hidden">
                  <div className={`h-2 rounded-full transition-all duration-500 ${storageStats.usagePercentage > 100 ? "bg-red-400" : "bg-white"}`} style={{ width: `${Math.min(storageStats.usagePercentage, 100)}%` }}></div>
               </div>
@@ -269,7 +278,7 @@ export default function DashboardPage() {
               {events.map((event) => (
                 <div key={event.id} className="bg-white rounded-xl border border-gray-200/80 shadow-sm hover:shadow-md transition duration-200 overflow-hidden group relative p-5">
                     
-                    {/* Action Icons (FIXED: HORIZONTAL ALIGNMENT) */}
+                    {/* Action Icons (Sejajar ke samping) */}
                     <div className="absolute top-3 right-3 flex flex-row gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                         <button onClick={(e) => { e.stopPropagation(); handleEditClick(event); }} className="bg-white hover:bg-blue-100 text-blue-600 p-1.5 rounded-lg shadow-sm border border-gray-200" title="Edit">
                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
@@ -289,27 +298,22 @@ export default function DashboardPage() {
                     <p className="text-gray-600 text-sm mb-4 line-clamp-2">{event.description || "-"}</p>
 
                     <div className="space-y-2 mb-4 text-sm text-gray-600">
-                      {/* Tanggal */}
                       <div className="flex items-center">
                           <svg className="w-4 h-4 mr-2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                           {new Date(event.date).toLocaleDateString("id-ID", { year: "numeric", month: "long", day: "numeric" })}
                       </div>
                       
-                      {/* Lokasi */}
                       <div className="flex items-center">
                           <svg className="w-4 h-4 mr-2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                           <span className="line-clamp-1">{event.location}</span>
                       </div>
 
-                      {/* Jumlah Foto & Status AI (FIXED: ALIGNMENT SEJAJAR) */}
+                      {/* Jumlah Foto & Status AI (Sejajar) */}
                       <div className="flex items-center flex-wrap gap-2">
-                        {/* Icon & Jumlah Foto */}
                         <div className="flex items-center">
                             <svg className="w-4 h-4 mr-2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                             <span>{event.photo_count} foto</span>
                         </div>
-                        
-                        {/* Status AI (Sebaris di sebelah kanan jumlah foto) */}
                         {event.photo_count > 0 && (
                             <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium border ${
                                 event.processed_count === event.photo_count 
