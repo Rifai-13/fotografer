@@ -7,9 +7,7 @@ import {
 } from "@aws-sdk/client-rekognition";
 import pLimit from "p-limit";
 
-export const dynamic = "force-dynamic";
-
-// Init AWS
+// Setup AWS
 const rekognitionClient = new RekognitionClient({
   region: process.env.AWS_REGION!,
   credentials: {
@@ -18,16 +16,12 @@ const rekognitionClient = new RekognitionClient({
   },
 });
 
-export async function GET(req: Request) {
-  // 🛡️ SECURITY Check
-  const authHeader = req.headers.get("authorization");
-  if (
-    process.env.NODE_ENV === "production" &&
-    authHeader !== `Bearer ${process.env.CRON_SECRET}`
-  ) {
-    // Pass
-  }
+export const dynamic = "force-dynamic";
 
+// ✨ Helper: Fungsi Tidur
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export async function GET() {
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -35,30 +29,25 @@ export async function GET(req: Request) {
   );
 
   try {
-    // 1. AMBIL FOTO ANTRIAN (PRIORITAS: TERBARU DULUAN)
-    const { data: photos, error: fetchError } = await supabase
+    // 1. Ambil 20 Foto Antrian (Sedikit saja buat background process)
+    const { data: photos, error } = await supabase
       .from("photos")
       .select("id, file_path, event_id")
       .eq("is_processed", false)
-      // 🔥 BARIS AJAIB: Urutkan dari created_at TERBARU (Descending)
-      // Jadi foto yang baru diupload 5 detik lalu akan langsung diambil
-      // Foto yang upload bulan lalu akan menunggu belakangan.
-      .order("created_at", { ascending: false }) 
-      .limit(20); // Ambil 20 biji
+      .limit(20);
 
-    if (fetchError) throw fetchError;
-
+    if (error) throw error;
     if (!photos || photos.length === 0) {
-      return NextResponse.json({ message: "Zzz... Tidak ada antrian foto." });
+      return NextResponse.json({ message: "No photos to process" });
     }
 
     console.log(`[CRON] Memproses ${photos.length} foto TERBARU...`);
 
-    const limit = pLimit(5); 
+    const limit = pLimit(3); // Cron jalan santai saja (Speed 3)
 
     const results = await Promise.all(
-      photos.map((photo) => {
-        return limit(async () => {
+      photos.map((photo) =>
+        limit(async () => {
           const collectionId = `event-${photo.event_id}`;
 
           try {
@@ -68,80 +57,75 @@ export async function GET(req: Request) {
                 .from("event-photos")
                 .download(photo.file_path);
 
-            if (downloadError) throw new Error(`Download Failed: ${downloadError.message}`);
-
+            if (downloadError) throw new Error("Download failed");
             const buffer = Buffer.from(await fileData.arrayBuffer());
 
-            // B. Indexing
-            const indexPhotoToAWS = async () => {
-              const command = new IndexFacesCommand({
-                CollectionId: collectionId,
-                Image: { Bytes: buffer },
-                ExternalImageId: photo.id,
-                MaxFaces: 10,
-                QualityFilter: "AUTO",
-              });
-              return await rekognitionClient.send(command);
+            // ✨ B. Indexing dengan RETRY (Anti-Nyerah)
+            const sendToAwsWithRetry = async (attempt = 1): Promise<any> => {
+              try {
+                const command = new IndexFacesCommand({
+                  CollectionId: collectionId,
+                  Image: { Bytes: buffer },
+                  ExternalImageId: photo.id,
+                  MaxFaces: 15,
+                  QualityFilter: "NONE", // Ikut aturan baru
+                });
+                return await rekognitionClient.send(command);
+              } catch (err: any) {
+                // Create Collection jika belum ada
+                if (err.name === "ResourceNotFoundException") {
+                   try {
+                     await rekognitionClient.send(new CreateCollectionCommand({ CollectionId: collectionId }));
+                   } catch (e) {}
+                   return sendToAwsWithRetry(attempt);
+                }
+
+                // Rate Limit -> Tunggu & Retry
+                if (
+                   (err.name === "ProvisionedThroughputExceededException" || 
+                    err.name === "ThrottlingException") && 
+                   attempt <= 3
+                ) {
+                   // Cron ngalah lebih lama (2 detik * attempt)
+                   console.log(`[CRON] ⚠️ Rate Limit ${photo.id}. Nunggu ${attempt * 2}s...`);
+                   await wait(2000 * attempt); 
+                   return sendToAwsWithRetry(attempt + 1);
+                }
+                throw err;
+              }
             };
 
-            let awsResponse;
-            try {
-              awsResponse = await indexPhotoToAWS();
-            } catch (awsErr: any) {
-              if (awsErr.name === "ResourceNotFoundException") {
-                try {
-                  await rekognitionClient.send(
-                    new CreateCollectionCommand({ CollectionId: collectionId })
-                  );
-                } catch (e) {}
-                awsResponse = await indexPhotoToAWS();
-              } else {
-                throw awsErr;
-              }
-            }
+            const awsResponse = await sendToAwsWithRetry();
+            const faceCount = awsResponse.FaceRecords ? awsResponse.FaceRecords.length : 0;
 
-            const faceCount = awsResponse.FaceRecords
-              ? awsResponse.FaceRecords.length
-              : 0;
-
-            // C. SUKSES
+            // C. Update DB
             await supabase
               .from("photos")
               .update({
                 is_processed: true,
                 faces_indexed: faceCount,
                 indexed_at: new Date().toISOString(),
-                error_log: null 
+                error_log: null,
               })
               .eq("id", photo.id);
 
-            return { id: photo.id, status: "success", faces: faceCount };
+            return { id: photo.id, status: "success" };
 
           } catch (err: any) {
-            console.error(`[CRON GAGAL] Photo ${photo.id}:`, err.message);
-            
-            // D. GAGAL
+            console.error(`[CRON GAGAL] Photo ${photo.id}: ${err.message}`);
+            // Catat error biar tau
             await supabase
               .from("photos")
-              .update({
-                is_processed: true, 
-                faces_indexed: 0,
-                error_log: err.message 
-              })
+              .update({ is_processed: true, faces_indexed: 0, error_log: err.message })
               .eq("id", photo.id);
-
             return { id: photo.id, status: "failed", error: err.message };
           }
-        });
-      })
+        })
+      )
     );
 
-    return NextResponse.json({
-      success: true,
-      processed: results.length,
-      details: results,
-    });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ success: true, results });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
