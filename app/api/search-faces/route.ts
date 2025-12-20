@@ -1,6 +1,6 @@
 // app/api/search-faces/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js"; // ⚠️ Import dari library langsung
+import { createClient } from "@supabase/supabase-js";
 import {
   RekognitionClient,
   SearchFacesByImageCommand,
@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     // Kita pakai Service Role agar tamu yang tidak login tetap bisa search foto
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!, // 🔥 KUNCI SAKTI (Pastikan ada di .env)
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
       {
         auth: {
           autoRefreshToken: false,
@@ -53,7 +53,8 @@ export async function POST(request: Request) {
       CollectionId: collectionId,
       Image: { Bytes: buffer },
       MaxFaces: 100,      // Cari sampai 100 wajah mirip
-      FaceMatchThreshold: 80, // Tingkat kemiripan minimal 80%
+      FaceMatchThreshold: 90, // Tingkat kemiripan minimal 80%
+      QualityFilter: "HIGH",
     });
 
     const response = await rekognitionClient.send(command);

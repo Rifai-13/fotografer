@@ -34,13 +34,6 @@ interface StorageStats {
   limitGb: number;
 }
 
-interface Photo {
-  id: string;
-  image_url: string;
-  file_path: string;
-  file_name: string;
-}
-
 export default function DashboardPage() {
   const [events, setEvents] = useState<Event[]>([]);
   const [user, setUser] = useState<User | null>(null);
@@ -52,6 +45,8 @@ export default function DashboardPage() {
     usagePercentage: 0,
     limitGb: 100,
   });
+
+  // --- STATE UNTUK DELETE ---
   const [deleteModal, setDeleteModal] = useState<{
     isOpen: boolean;
     event: Event | null;
@@ -60,6 +55,23 @@ export default function DashboardPage() {
     event: null,
   });
   const [deleting, setDeleting] = useState(false);
+
+  // --- STATE UNTUK UPDATE (BARU) ---
+  const [updateModal, setUpdateModal] = useState<{
+    isOpen: boolean;
+    event: Event | null;
+  }>({
+    isOpen: false,
+    event: null,
+  });
+  const [updateFormData, setUpdateFormData] = useState({
+    name: "",
+    description: "",
+    date: "",
+    location: "",
+  });
+  const [updating, setUpdating] = useState(false);
+
   const router = useRouter();
   const supabase = createClient();
 
@@ -67,12 +79,23 @@ export default function DashboardPage() {
     checkAuthAndFetchData();
   }, []);
 
+  // Effect untuk mengisi form saat modal update dibuka
+  useEffect(() => {
+    if (updateModal.event) {
+      setUpdateFormData({
+        name: updateModal.event.name,
+        description: updateModal.event.description || "",
+        date: updateModal.event.date,
+        location: updateModal.event.location,
+      });
+    }
+  }, [updateModal.event]);
+
   const checkAuthAndFetchData = async () => {
     try {
       setLoading(true);
       setError(null);
 
-      // Check session dan user
       const {
         data: { session },
         error: sessionError,
@@ -90,8 +113,6 @@ export default function DashboardPage() {
       }
 
       setUser(session.user as User);
-
-      // Fetch events dan storage stats
       await Promise.all([fetchEvents(), fetchStorageStats()]);
     } catch (err) {
       console.error("Error in checkAuthAndFetchData:", err);
@@ -101,11 +122,8 @@ export default function DashboardPage() {
     }
   };
 
-  // app/dashboard/page.tsx
-
   const fetchEvents = async () => {
     try {
-      // Kita minta Supabase: "Tolong ambil semua event, DAN hitung jumlah foto di dalamnya"
       const { data: eventsData, error: eventsError } = await supabase
         .from("events")
         .select("*, photos(count)")
@@ -118,16 +136,12 @@ export default function DashboardPage() {
       }
 
       const formattedEvents = eventsData.map((event) => {
-        // Logic KUNCI: Ambil angka count dari dalam array object yang dikembalikan Supabase
-        // Supabase biasanya mengembalikan: photos: [{ count: 10 }]
         const photosData = event.photos as unknown as { count: number }[];
-
-        // Kita ambil angkanya. Jika tidak ada/error, set jadi 0.
         const totalPhotos = photosData?.[0]?.count ?? 0;
 
         return {
           ...event,
-          photo_count: totalPhotos, // Masukkan angka asli kesini
+          photo_count: totalPhotos,
         };
       });
 
@@ -140,7 +154,6 @@ export default function DashboardPage() {
 
   const fetchStorageStats = async () => {
     try {
-      // Panggil function RPC yang kita buat di SQL
       const { data, error } = await supabase.rpc("get_storage_stats");
 
       if (error) {
@@ -152,9 +165,9 @@ export default function DashboardPage() {
       const totalUsage = stats.totalBytes || 0;
       const totalFiles = stats.totalFiles || 0;
 
-      const currentLimitGb = 100; // Misal limit 100GB
-      const storageLimit = 100 * 1024 * 1024 * 1024; // 1GB limit
-      const usagePercentage = (totalUsage / storageLimit) * 100; // Hilangkan Math.min biar kelihatan kalau over
+      const currentLimitGb = 100;
+      const storageLimit = 100 * 1024 * 1024 * 1024;
+      const usagePercentage = (totalUsage / storageLimit) * 100;
 
       setStorageStats({
         totalUsage,
@@ -169,11 +182,9 @@ export default function DashboardPage() {
 
   const formatFileSize = (bytes: number): string => {
     if (bytes === 0) return "0 Bytes";
-
     const k = 1024;
     const sizes = ["Bytes", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
@@ -198,18 +209,15 @@ export default function DashboardPage() {
     router.push(`/dashboard/events/${eventId}/upload`);
   };
 
+  // --- LOGIC DELETE ---
   const handleDeleteEvent = (event: Event) => {
     setDeleteModal({ isOpen: true, event });
   };
 
-  // app/dashboard/page.tsx (Fungsi confirmDeleteEvent)
-
   const confirmDeleteEvent = async () => {
     if (!deleteModal.event) return;
-
     const eventId = deleteModal.event.id;
 
-    // Konfirmasi final kepada user
     if (
       !window.confirm(
         `Apakah Anda yakin ingin menghapus event "${deleteModal.event.name}" secara permanen? Aksi ini tidak dapat dibatalkan.`
@@ -220,8 +228,6 @@ export default function DashboardPage() {
 
     try {
       setDeleting(true);
-
-      // 💡 KRITIS: Panggil API Server Admin yang sudah kita buat
       const response = await fetch("/api/photos/delete-full", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
@@ -236,9 +242,8 @@ export default function DashboardPage() {
         );
       }
 
-      // Jika sukses, update UI
       setEvents((prev) => prev.filter((event) => event.id !== eventId));
-      await fetchStorageStats(); // Refresh stats
+      await fetchStorageStats();
       setDeleteModal({ isOpen: false, event: null });
       alert(result.message);
     } catch (err: any) {
@@ -253,6 +258,51 @@ export default function DashboardPage() {
 
   const cancelDeleteEvent = () => {
     setDeleteModal({ isOpen: false, event: null });
+  };
+
+  // --- LOGIC UPDATE (BARU) ---
+  const handleEditClick = (event: Event) => {
+    setUpdateModal({ isOpen: true, event });
+  };
+
+  const handleUpdateChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+  ) => {
+    const { name, value } = e.target;
+    setUpdateFormData((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  };
+
+  const handleUpdateSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!updateModal.event) return;
+
+    setUpdating(true);
+    try {
+      const { error } = await supabase
+        .from("events")
+        .update({
+          name: updateFormData.name,
+          description: updateFormData.description,
+          date: updateFormData.date,
+          location: updateFormData.location,
+        })
+        .eq("id", updateModal.event.id);
+
+      if (error) throw error;
+
+      // Refresh list event
+      await fetchEvents();
+      setUpdateModal({ isOpen: false, event: null });
+      alert("Event berhasil diupdate!");
+    } catch (err: any) {
+      console.error("Error updating event:", err);
+      alert("Gagal mengupdate event: " + err.message);
+    } finally {
+      setUpdating(false);
+    }
   };
 
   const getUserName = () => {
@@ -297,12 +347,12 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
-      {/* Delete Confirmation Modal */}
+      
+      {/* --- MODAL DELETE --- */}
       {deleteModal.isOpen && deleteModal.event && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-auto shadow-xl">
             <div className="text-center">
-              {/* Warning Icon */}
               <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100 mb-4">
                 <svg
                   className="h-6 w-6 text-red-600"
@@ -318,79 +368,135 @@ export default function DashboardPage() {
                   />
                 </svg>
               </div>
-
               <h3 className="text-lg font-bold text-gray-900 mb-2">
                 Hapus Event?
               </h3>
-
               <p className="text-gray-600 mb-4">
                 Apakah Anda yakin ingin menghapus event{" "}
                 <strong>"{deleteModal.event.name}"</strong>? Semua foto yang
-                sudah diupload untuk event ini akan terhapus permanen dan tidak
-                dapat dikembalikan.
+                sudah diupload untuk event ini akan terhapus permanen.
               </p>
-
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
-                <div className="flex items-start space-x-2">
-                  <svg
-                    className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.35 16.5c-.77.833.192 2.5 1.732 2.5z"
-                    />
-                  </svg>
-                  <p className="text-sm text-red-700">
-                    <strong>Peringatan:</strong> Tindakan ini tidak dapat
-                    dibatalkan. {deleteModal.event.photo_count || 0} foto akan
-                    dihapus permanen dari storage.
-                  </p>
-                </div>
-              </div>
-
               <div className="flex space-x-3">
                 <button
                   onClick={cancelDeleteEvent}
                   disabled={deleting}
-                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2 px-4 rounded-lg transition duration-200 disabled:opacity-50"
+                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2 px-4 rounded-lg transition duration-200"
                 >
                   Batal
                 </button>
                 <button
                   onClick={confirmDeleteEvent}
                   disabled={deleting}
-                  className="flex-1 bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg transition duration-200 disabled:opacity-50 flex items-center justify-center space-x-2"
+                  className="flex-1 bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg transition duration-200 flex items-center justify-center"
                 >
-                  {deleting ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      <span>Menghapus...</span>
-                    </>
-                  ) : (
-                    <>
-                      <svg
-                        className="w-4 h-4"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                        />
-                      </svg>
-                      <span>Hapus</span>
-                    </>
-                  )}
+                  {deleting ? "Menghapus..." : "Hapus"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- MODAL UPDATE (BARU) --- */}
+      {/* Tampilan disesuaikan dengan CreateEventPage tapi dalam bentuk Modal */}
+      {updateModal.isOpen && updateModal.event && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl max-w-2xl w-full mx-auto shadow-2xl overflow-hidden relative border border-blue-200/60">
+            {/* Background Decorative Elements (Sama seperti Create Page) */}
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-blue-600"></div>
+            <div className="absolute -top-24 -right-24 w-48 h-48 bg-blue-100 rounded-full opacity-50 pointer-events-none"></div>
+
+            {/* Header */}
+            <div className="p-8 pb-4 relative z-10 text-center">
+              <h3 className="text-2xl font-bold text-blue-900">Update Event</h3>
+              <p className="text-blue-600/80">
+                Ubah detail event Anda di sini
+              </p>
+            </div>
+
+            {/* Form Content */}
+            <div className="p-8 pt-2 relative z-10">
+              <form onSubmit={handleUpdateSubmit} className="space-y-6">
+                <div>
+                  <label className="text-sm font-medium text-blue-900 mb-2 block">
+                    Nama Event *
+                  </label>
+                  <input
+                    type="text"
+                    name="name"
+                    value={updateFormData.name}
+                    onChange={handleUpdateChange}
+                    required
+                    className="w-full h-11 px-3 text-sm border-2 border-blue-200 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 transition-all duration-200 bg-white/50"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-blue-900 mb-2 block">
+                    Deskripsi
+                  </label>
+                  <textarea
+                    name="description"
+                    value={updateFormData.description}
+                    onChange={handleUpdateChange}
+                    rows={4}
+                    className="w-full p-3 text-sm border-2 border-blue-200 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 transition-all duration-200 bg-white/50 resize-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-blue-900 mb-2 block">
+                    Tanggal Event *
+                  </label>
+                  <input
+                    type="date"
+                    name="date"
+                    value={updateFormData.date}
+                    onChange={handleUpdateChange}
+                    required
+                    className="w-full h-11 px-3 text-sm border-2 border-blue-200 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 transition-all duration-200 bg-white/50"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-blue-900 mb-2 block">
+                    Lokasi *
+                  </label>
+                  <input
+                    type="text"
+                    name="location"
+                    value={updateFormData.location}
+                    onChange={handleUpdateChange}
+                    required
+                    className="w-full h-11 px-3 text-sm border-2 border-blue-200 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 transition-all duration-200 bg-white/50"
+                  />
+                </div>
+
+                {/* Buttons */}
+                <div className="flex space-x-4 pt-6">
+                  <button
+                    type="button"
+                    onClick={() => setUpdateModal({ isOpen: false, event: null })}
+                    className="flex-1 h-11 border-2 border-blue-200 text-blue-700 hover:bg-blue-50 rounded-lg font-medium transition-all duration-200"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={updating}
+                    className="flex-1 h-11 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-semibold rounded-lg shadow-lg shadow-blue-500/25 hover:shadow-blue-600/25 transition-all duration-200 transform hover:scale-[1.02] disabled:opacity-50 flex items-center justify-center"
+                  >
+                    {updating ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                        Menyimpan...
+                      </>
+                    ) : (
+                      "Simpan Perubahan"
+                    )}
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         </div>
@@ -463,7 +569,6 @@ export default function DashboardPage() {
         {/* Stats & Actions */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           {/* Storage Usage Card */}
-          {/* Storage Usage Card */}
           <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-2xl p-6 shadow-lg overflow-hidden relative">
             <div className="flex items-center justify-between z-10 relative">
               <div>
@@ -475,7 +580,9 @@ export default function DashboardPage() {
                   <p className="text-2xl font-bold">
                     {formatFileSize(storageStats.totalUsage)}
                   </p>
-                  <span className="text-blue-200 text-sm">/ {storageStats.limitGb} GB</span>
+                  <span className="text-blue-200 text-sm">
+                    / {storageStats.limitGb} GB
+                  </span>
                 </div>
 
                 <p className="text-blue-100 text-xs mt-1">
@@ -506,16 +613,15 @@ export default function DashboardPage() {
               {/* Progress Bar Indicator */}
               <div
                 className={`h-2 rounded-full transition-all duration-500 ${
-                  storageStats.usagePercentage > 100 ? "bg-red-400" : "bg-white"
+                  storageStats.usagePercentage > 100
+                    ? "bg-red-400"
+                    : "bg-white"
                 }`}
                 style={{
-                  // Logic Kunci: Pakai Math.min supaya lebar maksimal cuma 100%
                   width: `${Math.min(storageStats.usagePercentage, 100)}%`,
                 }}
               ></div>
             </div>
-
-            {/* Peringatan jika Over Limit (Opsional, biar user sadar) */}
             {storageStats.usagePercentage > 100 && (
               <p className="text-red-200 text-xs mt-2 font-medium animate-pulse">
                 ⚠️ Kuota penyimpanan penuh!
@@ -637,10 +743,10 @@ export default function DashboardPage() {
                   key={event.id}
                   className="bg-white rounded-xl border border-gray-200/80 shadow-sm hover:shadow-md transition duration-200 overflow-hidden group relative"
                 >
-                  {/* Delete Button */}
+                  {/* --- TOMBOL DELETE --- */}
                   <button
                     onClick={() => handleDeleteEvent(event)}
-                    className="absolute top-3 right-3 bg-white/80 hover:bg-red-500 text-gray-400 hover:text-white p-1.5 rounded-lg transition duration-200 opacity-0 group-hover:opacity-100"
+                    className="absolute top-3 right-3 bg-white/80 hover:bg-red-500 text-gray-400 hover:text-white p-1.5 rounded-lg transition duration-200 opacity-0 group-hover:opacity-100 z-10"
                     title="Hapus Event"
                   >
                     <svg
@@ -654,6 +760,31 @@ export default function DashboardPage() {
                         strokeLinejoin="round"
                         strokeWidth={2}
                         d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                      />
+                    </svg>
+                  </button>
+
+                  {/* --- TOMBOL PENSIL (UPDATE) BARU --- */}
+                  {/* Diletakkan tepat di bawah tombol delete (top-12) */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation(); // Mencegah konflik klik
+                      handleEditClick(event);
+                    }}
+                    className="absolute top-12 right-3 bg-white/80 hover:bg-blue-500 text-gray-400 hover:text-white p-1.5 rounded-lg transition duration-200 opacity-0 group-hover:opacity-100 z-10"
+                    title="Update Event"
+                  >
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
                       />
                     </svg>
                   </button>
