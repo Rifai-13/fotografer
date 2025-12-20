@@ -40,7 +40,7 @@ export async function POST(req: Request) {
       .select("id, file_path")
       .eq("event_id", eventId)
       .eq("is_processed", false)
-      .limit(50);
+      .limit(25);
 
     if (fetchError) throw fetchError;
 
