@@ -165,8 +165,8 @@ export default function DashboardPage() {
       const totalUsage = stats.totalBytes || 0;
       const totalFiles = stats.totalFiles || 0;
 
-      const currentLimitGb = 100;
-      const storageLimit = 100 * 1024 * 1024 * 1024;
+      const currentLimitGb = 100; // Misal limit 100GB
+      const storageLimit = 100 * 1024 * 1024 * 1024; // 1GB limit
       const usagePercentage = (totalUsage / storageLimit) * 100;
 
       setStorageStats({
