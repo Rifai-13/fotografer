@@ -15,7 +15,7 @@ export default function Header() {
             />
           </Link>
           
-          <div className="flex items-center space-x-4">
+          {/* <div className="flex items-center space-x-4">
             <Link 
               href="/login" 
               className="px-6 py-2 text-gray-700 font-medium rounded-lg hover:text-gray-900 transition-colors duration-200"
@@ -28,7 +28,7 @@ export default function Header() {
             >
               Daftar
             </Link>
-          </div>
+          </div> */}
         </nav>
       </div>
     </header>
