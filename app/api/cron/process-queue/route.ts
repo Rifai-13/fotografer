@@ -19,19 +19,15 @@ const rekognitionClient = new RekognitionClient({
 });
 
 export async function GET(req: Request) {
-  // 🛡️ SECURITY: Pastikan yang manggil cuma Vercel Cron
-  // Header ini otomatis dikirim oleh Vercel
+  // 🛡️ SECURITY Check
   const authHeader = req.headers.get("authorization");
   if (
     process.env.NODE_ENV === "production" &&
     authHeader !== `Bearer ${process.env.CRON_SECRET}`
   ) {
-    // Note: Di Vercel Dashboard nanti bisa set CRON_SECRET, 
-    // tapi kalau mau simpel (tanpa secret) bisa hapus blok if ini sementara.
-    // Untuk sekarang kita biarkan terbuka (public) tapi obscure path-nya.
+      // Pass
   }
 
-  // Init Supabase Admin
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -39,13 +35,12 @@ export async function GET(req: Request) {
   );
 
   try {
-    // 1. CARI 50 FOTO DARI EVENT MANAPUN YANG BELUM SELESAI
-    // Kita ambil faces_indexed juga untuk safety check
+    // 1. TURUNKAN LIMIT JADI 20 (Biar Vercel Gak Timeout)
     const { data: photos, error: fetchError } = await supabase
       .from("photos")
       .select("id, file_path, event_id")
       .eq("is_processed", false)
-      .limit(50); // Kerjakan 50 foto per menit
+      .limit(20); // 👈 TURUNKAN DARI 50 KE 20
 
     if (fetchError) throw fetchError;
 
@@ -55,27 +50,25 @@ export async function GET(req: Request) {
 
     console.log(`[CRON] Menemukan ${photos.length} foto antrian...`);
 
-    // Limit concurrency AWS biar gak overload
-    const limit = pLimit(5);
+    const limit = pLimit(5); // Concurrency tetap 5
 
-    // 2. PROSES SEMUA
     const results = await Promise.all(
       photos.map((photo) => {
         return limit(async () => {
-          const collectionId = `event-${photo.event_id}`; // Collection dinamis sesuai event
+          const collectionId = `event-${photo.event_id}`;
 
           try {
-            // A. Download Gambar
+            // A. Download
             const { data: fileData, error: downloadError } =
               await supabase.storage
                 .from("event-photos")
                 .download(photo.file_path);
 
-            if (downloadError) throw downloadError;
+            if (downloadError) throw new Error(`Download Failed: ${downloadError.message}`);
 
             const buffer = Buffer.from(await fileData.arrayBuffer());
 
-            // B. Helper Function Index
+            // B. Indexing
             const indexPhotoToAWS = async () => {
               const command = new IndexFacesCommand({
                 CollectionId: collectionId,
@@ -91,7 +84,6 @@ export async function GET(req: Request) {
             try {
               awsResponse = await indexPhotoToAWS();
             } catch (awsErr: any) {
-              // Auto-Create Collection jika belum ada
               if (awsErr.name === "ResourceNotFoundException") {
                 try {
                   await rekognitionClient.send(
@@ -108,28 +100,30 @@ export async function GET(req: Request) {
               ? awsResponse.FaceRecords.length
               : 0;
 
-            // C. Update Sukses
+            // C. SUKSES -> Simpan Data & Kosongkan Error Log
             await supabase
               .from("photos")
               .update({
                 is_processed: true,
                 faces_indexed: faceCount,
                 indexed_at: new Date().toISOString(),
+                error_log: null // Reset error jika sebelumnya ada
               })
               .eq("id", photo.id);
 
             return { id: photo.id, status: "success", faces: faceCount };
+
           } catch (err: any) {
             console.error(`[CRON GAGAL] Photo ${photo.id}:`, err.message);
             
-            // Tandai error tapi jangan stop antrian (Set faces 0)
-            // Nanti bisa direset manual
+            // D. GAGAL -> Simpan Pesan Errornya!
             await supabase
               .from("photos")
               .update({
-                is_processed: true,
+                is_processed: true, // Tetap true biar antrian jalan
                 faces_indexed: 0,
-                // indexed_at biarkan NULL sebagai tanda error
+                // indexed_at biarkan NULL (Tanda Gagal)
+                error_log: err.message // 👈 SIMPAN ERRORNYA DISINI
               })
               .eq("id", photo.id);
 
