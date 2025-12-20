@@ -4,13 +4,25 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import imageCompression from "browser-image-compression";
-import pLimit from "p-limit"; // ✅ WAJIB IMPORT INI
+import pLimit from "p-limit";
 
-// CONFIGURATION DEFAULT
-const COMPRESSION_OPTIONS = {
-  maxSizeMB: 0.3, // Target compress ke 300KB
+// --- KONFIGURASI SMART COMPRESSION ---
+
+// 1. Mode Turbo (File Kecil) -> Target 300KB
+const OPTIONS_TURBO = {
+  maxSizeMB: 0.3,
   maxWidthOrHeight: 1920,
   useWebWorker: true,
+  fileType: "image/jpeg",
+};
+
+// 2. Mode High Quality (File Besar/Original) -> Target 1.5MB
+// MacBook user aman pakai ini. Kualitas tajam, size hemat.
+const OPTIONS_HQ = {
+  maxSizeMB: 1.5,
+  maxWidthOrHeight: 3000,
+  useWebWorker: true,
+  fileType: "image/jpeg",
 };
 
 export default function UploadPhotos({
@@ -54,7 +66,7 @@ export default function UploadPhotos({
     });
   };
 
-  // 🛠️ HELPER: Pecah array jadi chunks
+  // Helper chunk array
   function chunkArray<T>(array: T[], size: number): T[][] {
     const result = [];
     for (let i = 0; i < array.length; i += size) {
@@ -63,7 +75,7 @@ export default function UploadPhotos({
     return result;
   }
 
-  // 🚀 LOGIC ADAPTIVE UPLOAD
+  // 🚀 LOGIC UTAMA
   const handleUpload = async () => {
     if (selectedFiles.length === 0 || !eventId) return;
 
@@ -81,59 +93,53 @@ export default function UploadPhotos({
       return;
     }
 
-    // 1. TENTUKAN STRATEGI BERDASARKAN RATA-RATA SIZE FILE
-    // Kita cek file pertama/rata-rata untuk menentukan mode
+    // 1. ANALISA FILE (Berat vs Ringan)
     const totalSize = selectedFiles.reduce((acc, file) => acc + file.size, 0);
     const avgSize = totalSize / selectedFiles.length;
-    const isHeavyLoad = avgSize > 300 * 1024; // Di atas 300KB dianggap 'Berat'
+    // Ambang batas: rata-rata di atas 2MB dianggap berat
+    const isHeavyLoad = avgSize > 2 * 1024 * 1024; 
 
-    // KONFIGURASI DINAMIS
-    const BATCH_SIZE = isHeavyLoad ? 5 : 30; // 5 foto kalau gede, 30 kalau kecil
-    const CONCURRENCY = isHeavyLoad ? 5 : 30; // Limit koneksi bersamaan
+    // 2. CONFIG STRATEGI (UPDATED FOR MACBOOK)
+    // - Jika Heavy (Original): Upload 8 file sekaligus (Permintaan User)
+    // - Jika Light (Kecil): Upload 30 file sekaligus
+    const BATCH_SIZE = isHeavyLoad ? 8 : 30; 
+    const CONCURRENCY = isHeavyLoad ? 8 : 30; 
+    const COMPRESSION_SETTING = isHeavyLoad ? OPTIONS_HQ : OPTIONS_TURBO;
 
     setStatusLog(
       isHeavyLoad
-        ? `🐢 Mode High-Res Detected: Upload per ${BATCH_SIZE} file...`
-        : `🐇 Mode Turbo: Upload per ${BATCH_SIZE} file...`
+        ? `💎 Mode HQ (MacBook Optimized): Batch ${BATCH_SIZE} file...`
+        : `🐇 Mode Turbo: Batch ${BATCH_SIZE} file...`
     );
 
-    // Setup Limitasi Koneksi
     const limit = pLimit(CONCURRENCY);
-
-    // 2. Pecah jadi Batch
     const fileChunks = chunkArray(selectedFiles, BATCH_SIZE);
     let totalUploaded = 0;
 
-    // 3. Loop per Batch
+    // 3. LOOP UPLOAD (TANPA INDEXING DI DALAMNYA)
     for (const [batchIndex, currentBatch] of fileChunks.entries()) {
       setStatusLog(
-        `📦 Batch ${batchIndex + 1}/${fileChunks.length} (${
-          isHeavyLoad ? "High-Res" : "Turbo"
-        })...`
+        `📦 Upload Batch ${batchIndex + 1}/${fileChunks.length} sedang berjalan...`
       );
 
       const batchSuccessData: any[] = [];
 
-      // 4. Proses Upload dalam Batch (Concurrent tapi Terlimit)
       const batchPromises = currentBatch.map((file) => {
         return limit(async () => {
           const originalIndex = selectedFiles.indexOf(file);
 
           try {
-            // A. KOMPRESI
-            // Kita tetap coba kompres, kalau file sudah kecil dia lewat cepat
+            // A. Compress
             setProgressMap((prev) => ({ ...prev, [originalIndex]: 10 }));
-
             let fileToUpload = file;
             try {
-              // Selalu kompres agar hemat storage & bandwidth
-              fileToUpload = await imageCompression(file, COMPRESSION_OPTIONS);
+              fileToUpload = await imageCompression(file, COMPRESSION_SETTING);
             } catch (e) {
-              console.warn("Skip compress", e);
+              console.warn("Gagal kompresi, pakai file asli", e);
             }
 
-            // B. UPLOAD
-            setProgressMap((prev) => ({ ...prev, [originalIndex]: 40 }));
+            // B. Upload Storage
+            setProgressMap((prev) => ({ ...prev, [originalIndex]: 50 }));
             const fileNameClean = file.name.replace(/[^a-zA-Z0-9.]/g, "_");
             const storagePath = `${eventId}/${Date.now()}_${fileNameClean}`;
 
@@ -146,12 +152,12 @@ export default function UploadPhotos({
 
             if (uploadError) throw uploadError;
 
-            // C. URL
+            // C. Get URL
             const { data: urlData } = supabase.storage
               .from("event-photos")
               .getPublicUrl(storagePath);
 
-            // Push data
+            // Push Data
             batchSuccessData.push({
               event_id: eventId,
               photographer_id: photographerId,
@@ -161,10 +167,10 @@ export default function UploadPhotos({
               image_url: urlData.publicUrl,
               file_size: fileToUpload.size,
               created_at: new Date().toISOString(),
-              is_processed: false,
+              is_processed: false, // Penting: False biar nanti diambil indexing loop
             });
 
-            setProgressMap((prev) => ({ ...prev, [originalIndex]: 100 }));
+            setProgressMap((prev) => ({ ...prev, [originalIndex]: 90 }));
           } catch (error) {
             console.error(`Gagal: ${file.name}`, error);
             setProgressMap((prev) => ({ ...prev, [originalIndex]: -1 }));
@@ -172,10 +178,10 @@ export default function UploadPhotos({
         });
       });
 
-      // Tunggu batch ini selesai (sesuai limit concurrency)
+      // Tunggu 1 batch (8 foto) selesai semua
       await Promise.all(batchPromises);
 
-      // 5. Simpan ke Database
+      // Save Batch ke Database
       if (batchSuccessData.length > 0) {
         try {
           const res = await fetch("/api/photos/bulk-register", {
@@ -186,13 +192,13 @@ export default function UploadPhotos({
 
           if (!res.ok) throw new Error("Gagal DB");
 
-          // 6. 🔥 TRIGGER AI (Fire & Forget)
-          // Langsung colek AI, jangan ditunggu
-          fetch("/api/index-faces", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ eventId: eventId }),
-          }).catch((err) => console.error("Auto-index trigger failed", err));
+          // Update progress jadi 100% (Centang hijau)
+          currentBatch.forEach((file) => {
+            const idx = selectedFiles.indexOf(file);
+            if (progressMap[idx] !== -1) {
+              setProgressMap((prev) => ({ ...prev, [idx]: 100 }));
+            }
+          });
 
           totalUploaded += batchSuccessData.length;
         } catch (err) {
@@ -201,13 +207,15 @@ export default function UploadPhotos({
       }
     }
 
-    setUploading(false);
-    setStatusLog("✅ Selesai!");
-    alert(`Upload Selesai! ${totalUploaded} foto berhasil.`);
+    // 4. SMART INDEXING LOOP (SETELAH SEMUA UPLOAD SELESAI)
+    // Ini biar server gak timeout kalau upload 10k foto
+    if (totalUploaded > 0) {
+      setStatusLog("✅ Upload Selesai! AI akan memproses di background...");
+    }
 
     setTimeout(() => {
       router.push(`/dashboard/events/${eventId}/manage`);
-    }, 1500);
+    }, 500);
   };
 
   // --- UI PART ---
@@ -219,11 +227,10 @@ export default function UploadPhotos({
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold text-gray-800">Upload Foto</h1>
           <div className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
-            Auto-Adaptive Mode ⚡
+            MacBook Optimized ⚡
           </div>
         </div>
 
-        {/* ... INPUT FILE AREA (Copy dari code sebelumnya) ... */}
         {!uploading && (
           <div
             onClick={() => fileInputRef.current?.click()}
@@ -244,13 +251,12 @@ export default function UploadPhotos({
           </div>
         )}
 
-        {/* ... ACTION BAR & GRID PREVIEW (Copy dari code sebelumnya) ... */}
         {selectedFiles.length > 0 && (
           <div className="mt-6">
             <div className="flex justify-between items-center mb-4 border-b pb-2 sticky top-0 bg-white z-10">
               <span className="font-bold">{selectedFiles.length} Foto</span>
               {statusLog && (
-                <span className="text-blue-600 text-sm animate-pulse">
+                <span className="text-blue-600 text-sm animate-pulse font-medium">
                   {statusLog}
                 </span>
               )}
@@ -265,9 +271,9 @@ export default function UploadPhotos({
                 <button
                   onClick={handleUpload}
                   disabled={uploading}
-                  className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold"
+                  className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold disabled:bg-blue-300"
                 >
-                  {uploading ? "Processing..." : "START UPLOAD"}
+                  {uploading ? "Memproses..." : "START UPLOAD"}
                 </button>
               </div>
             </div>
