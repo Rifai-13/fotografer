@@ -37,26 +37,33 @@ function LoadingScreen() {
 function ResultsPageContent() {
   const [matches, setMatches] = useState<Match[]>([]);
   const [downloading, setDownloading] = useState<string | null>(null);
-  
-  // STATE BARU: Untuk menyimpan foto yang sedang dibuka (di-klik)
+
+  // State untuk Modal / Lightbox
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
 
   const router = useRouter();
   const searchParams = useSearchParams();
   const eventId = searchParams.get("eventId");
 
-  // Parse data matches dari URL
+  // ✅ PERBAIKAN UTAMA DISINI: Ambil data dari LocalStorage
   useEffect(() => {
-    const matchesParam = searchParams.get("matches");
-    if (matchesParam) {
+    // 1. Coba ambil data dari memori browser (LocalStorage)
+    // Ini solusi untuk menghindari error "URI Too Long"
+    const storedResults = localStorage.getItem("searchResults");
+
+    if (storedResults) {
       try {
-        const parsedMatches = JSON.parse(matchesParam);
+        const parsedMatches = JSON.parse(storedResults);
         setMatches(parsedMatches);
       } catch (error) {
-        console.error("Error parsing matches:", error);
+        console.error("Error parsing matches from local storage:", error);
       }
+    } else {
+      // Opsional: Jika tidak ada data di storage, mungkin user refresh halaman
+      // Bisa diarahkan kembali ke scan atau biarkan kosong
+      console.log("Tidak ada data hasil pencarian ditemukan.");
     }
-  }, [searchParams]);
+  }, []);
 
   // Fungsi Download Gambar
   const handleDownload = async (imageUrl: string, photoId: string) => {
@@ -69,7 +76,10 @@ function ResultsPageContent() {
       const link = document.createElement("a");
       link.href = url;
       // Nama file saat didownload
-      link.download = `foto-${eventId?.slice(0, 5)}-${photoId.slice(0, 5)}.jpg`;
+      link.download = `foto-${eventId?.slice(0, 5) || "event"}-${photoId.slice(
+        0,
+        5
+      )}.jpg`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -140,7 +150,7 @@ function ResultsPageContent() {
       <div className="max-w-6xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
         {matches.length === 0 ? (
           // Tampilan jika tidak ada hasil
-          <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-12 border border-white/50 shadow-xl text-center max-w-2xl mx-auto">
+          <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-12 border border-white/50 shadow-xl text-center max-w-2xl mx-auto animate-in fade-in zoom-in duration-300">
             <div className="bg-gray-100 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner">
               <svg
                 className="w-12 h-12 text-gray-400"
@@ -173,7 +183,7 @@ function ResultsPageContent() {
         ) : (
           // Tampilan jika ada hasil
           <>
-            <div className="text-center mb-10">
+            <div className="text-center mb-10 animate-in slide-in-from-bottom duration-500">
               <div className="inline-block bg-green-100 text-green-800 px-4 py-2 rounded-full text-sm font-bold mb-4 shadow-sm">
                 🎉 Berhasil
               </div>
@@ -189,7 +199,7 @@ function ResultsPageContent() {
 
             {/* GRID FOTO */}
             <div
-              className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6"
+              className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6 animate-in fade-in duration-700"
               style={{ gridAutoRows: "1fr" }}
             >
               {matches.map((match, index) => {
@@ -200,7 +210,6 @@ function ResultsPageContent() {
                 return (
                   <div
                     key={match.photo_id}
-                    // TAMBAHAN: onClick untuk membuka modal
                     onClick={() => setSelectedMatch(match)}
                     className="relative aspect-square rounded-2xl overflow-hidden shadow-md hover:shadow-xl transition-all duration-300 group bg-gray-200 cursor-pointer ring-4 ring-transparent hover:ring-blue-200"
                   >
@@ -285,25 +294,34 @@ function ResultsPageContent() {
         )}
       </div>
 
-      {/* --- FITUR BARU: MODAL / LIGHTBOX FOTO --- */}
+      {/* --- MODAL / LIGHTBOX FOTO --- */}
       {selectedMatch && (
-        <div 
+        <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 animate-in fade-in duration-200"
           onClick={() => setSelectedMatch(null)} // Klik background untuk tutup
         >
           {/* Container Modal */}
-          <div 
+          <div
             className="relative w-full max-w-4xl max-h-[90vh] flex flex-col items-center"
             onClick={(e) => e.stopPropagation()} // Biar klik foto ga nutup modal
           >
-            
             {/* Tombol Close (Pojok Kanan Atas) */}
             <button
               onClick={() => setSelectedMatch(null)}
               className="absolute -top-12 right-0 text-white hover:text-gray-300 transition-colors p-2"
             >
-              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              <svg
+                className="w-8 h-8"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
               </svg>
             </button>
 
@@ -313,7 +331,7 @@ function ResultsPageContent() {
                 src={selectedMatch.image_url}
                 alt="Full preview"
                 fill
-                className="object-contain" // Biar foto ga kepotong (fit to screen)
+                className="object-contain"
                 priority
               />
             </div>
@@ -326,32 +344,45 @@ function ResultsPageContent() {
               >
                 Tutup
               </button>
-              
+
               <button
-                onClick={() => handleDownload(selectedMatch.image_url, selectedMatch.photo_id)}
+                onClick={() =>
+                  handleDownload(
+                    selectedMatch.image_url,
+                    selectedMatch.photo_id
+                  )
+                }
                 disabled={downloading === selectedMatch.photo_id}
                 className="px-8 py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 transition-colors flex items-center gap-2 shadow-lg disabled:opacity-50"
               >
                 {downloading === selectedMatch.photo_id ? (
-                   <>
-                     <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                     Mengunduh...
-                   </>
+                  <>
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                    Mengunduh...
+                  </>
                 ) : (
                   <>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                      />
                     </svg>
                     Download Foto HD
                   </>
                 )}
               </button>
             </div>
-            
           </div>
         </div>
       )}
-
     </div>
   );
 }

@@ -171,20 +171,14 @@ export default function ScanPage() {
       setSearching(true);
       setError(null);
 
-      // 1. Ubah Base64 (Captured Image) menjadi File Object
-      // Ini penting agar bisa masuk ke FormData sebagai file upload
       const file = dataURLtoFile(capturedImage, "selfie.jpg");
-
-      // 2. Siapkan FormData
       const formData = new FormData();
-      formData.append("file", file);      // Masukkan file gambar
-      formData.append("eventId", selectedEvent); // Masukkan ID Event
+      formData.append("file", file);
+      formData.append("eventId", selectedEvent);
 
-      // 3. Panggil API dengan FormData
-      // PENTING: Jangan set header 'Content-Type'! Biarkan browser yang atur boundary-nya.
       const response = await fetch("/api/search-faces", {
         method: "POST",
-        body: formData, 
+        body: formData,
       });
 
       const result = await response.json();
@@ -194,25 +188,26 @@ export default function ScanPage() {
       }
 
       if (result.status === "NO_COLLECTION") {
-        console.warn("⚠️ Collection not found for this event:", result.message);
-        setError(
-          "Belum ada foto yang di-upload untuk event ini. Silakan hubungi fotografer."
-        );
+        setError("Belum ada foto yang di-upload untuk event ini.");
         setSearching(false);
         return;
       }
 
-      console.log("✅ Search results:", result);
-
+      // ✅ PERBAIKAN DI SINI:
+      // Jangan kirim data lewat URL. Simpan ke LocalStorage.
+      
       if (result.matches && result.matches.length > 0) {
-        router.push(
-          `/results?eventId=${selectedEvent}&matches=${encodeURIComponent(
-            JSON.stringify(result.matches)
-          )}`
-        );
+        // 1. Simpan hasil ke memori browser
+        localStorage.setItem("searchResults", JSON.stringify(result.matches));
+        
+        // 2. Pindah halaman tanpa bawa beban berat
+        router.push(`/results?eventId=${selectedEvent}`);
       } else {
-        router.push(`/results?eventId=${selectedEvent}&matches=[]`);
+        // Kalau kosong, tetap simpan array kosong biar halaman sebelah tau
+        localStorage.setItem("searchResults", JSON.stringify([]));
+        router.push(`/results?eventId=${selectedEvent}`);
       }
+
     } catch (err: any) {
       console.error("❌ Search faces error:", err);
       setError("Gagal mencari foto: " + err.message);
