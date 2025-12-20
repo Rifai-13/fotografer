@@ -25,7 +25,7 @@ export async function GET(req: Request) {
     process.env.NODE_ENV === "production" &&
     authHeader !== `Bearer ${process.env.CRON_SECRET}`
   ) {
-      // Pass
+    // Pass
   }
 
   const supabase = createClient(
@@ -35,12 +35,16 @@ export async function GET(req: Request) {
   );
 
   try {
-    // 1. TURUNKAN LIMIT JADI 20 (Biar Vercel Gak Timeout)
+    // 1. AMBIL FOTO ANTRIAN (PRIORITAS: TERBARU DULUAN)
     const { data: photos, error: fetchError } = await supabase
       .from("photos")
       .select("id, file_path, event_id")
       .eq("is_processed", false)
-      .limit(20); // 👈 TURUNKAN DARI 50 KE 20
+      // 🔥 BARIS AJAIB: Urutkan dari created_at TERBARU (Descending)
+      // Jadi foto yang baru diupload 5 detik lalu akan langsung diambil
+      // Foto yang upload bulan lalu akan menunggu belakangan.
+      .order("created_at", { ascending: false }) 
+      .limit(20); // Ambil 20 biji
 
     if (fetchError) throw fetchError;
 
@@ -48,9 +52,9 @@ export async function GET(req: Request) {
       return NextResponse.json({ message: "Zzz... Tidak ada antrian foto." });
     }
 
-    console.log(`[CRON] Menemukan ${photos.length} foto antrian...`);
+    console.log(`[CRON] Memproses ${photos.length} foto TERBARU...`);
 
-    const limit = pLimit(5); // Concurrency tetap 5
+    const limit = pLimit(5); 
 
     const results = await Promise.all(
       photos.map((photo) => {
@@ -100,14 +104,14 @@ export async function GET(req: Request) {
               ? awsResponse.FaceRecords.length
               : 0;
 
-            // C. SUKSES -> Simpan Data & Kosongkan Error Log
+            // C. SUKSES
             await supabase
               .from("photos")
               .update({
                 is_processed: true,
                 faces_indexed: faceCount,
                 indexed_at: new Date().toISOString(),
-                error_log: null // Reset error jika sebelumnya ada
+                error_log: null 
               })
               .eq("id", photo.id);
 
@@ -116,14 +120,13 @@ export async function GET(req: Request) {
           } catch (err: any) {
             console.error(`[CRON GAGAL] Photo ${photo.id}:`, err.message);
             
-            // D. GAGAL -> Simpan Pesan Errornya!
+            // D. GAGAL
             await supabase
               .from("photos")
               .update({
-                is_processed: true, // Tetap true biar antrian jalan
+                is_processed: true, 
                 faces_indexed: 0,
-                // indexed_at biarkan NULL (Tanda Gagal)
-                error_log: err.message // 👈 SIMPAN ERRORNYA DISINI
+                error_log: err.message 
               })
               .eq("id", photo.id);
 

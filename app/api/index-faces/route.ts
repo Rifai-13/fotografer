@@ -7,6 +7,9 @@ import {
 } from "@aws-sdk/client-rekognition";
 import pLimit from "p-limit";
 
+export const maxDuration = 60; // ⚡ FORCE VERCEL PRO (60 Detik Timeout)
+export const dynamic = "force-dynamic";
+
 // Init AWS
 const rekognitionClient = new RekognitionClient({
   region: process.env.AWS_REGION!,
@@ -17,7 +20,6 @@ const rekognitionClient = new RekognitionClient({
 });
 
 export async function POST(req: Request) {
-  // 🛡️ MODE ADMIN
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -27,13 +29,14 @@ export async function POST(req: Request) {
   try {
     const { eventId } = await req.json();
 
-    // 1. AMBIL FOTO (TURUNKAN LIMIT JADI 20 BIAR AMAN DARI TIMEOUT)
+    // 1. AMBIL LEBIH BANYAK (50 FOTO SEKALIGUS)
+    // Karena kita pakai p-limit, 50 foto masih aman dalam 60 detik.
     const { data: photos, error: fetchError } = await supabase
       .from("photos")
       .select("id, file_path")
       .eq("event_id", eventId)
       .eq("is_processed", false)
-      .limit(20); // 👈 UBAH DARI 50 KE 20
+      .limit(50); // 🚀 NAIKKAN JADI 50
 
     if (fetchError) throw fetchError;
 
@@ -45,34 +48,35 @@ export async function POST(req: Request) {
       });
     }
 
-    console.log(`Processing ${photos.length} photos...`);
+    console.log(`🚀 TURBO MODE: Processing ${photos.length} photos...`);
     const collectionId = `event-${eventId}`;
 
-    // Limit concurrency AWS
-    const limit = pLimit(5);
+    // 🔥 NAIKKAN CONCURRENCY JADI 10
+    // Artinya: 10 Foto diproses BERSAMAAN.
+    // 50 foto akan selesai dalam 5 gelombang (sangat cepat).
+    const limit = pLimit(10); 
 
-    // 2. LOOPING
     const results = await Promise.all(
       photos.map((photo) => {
         return limit(async () => {
           try {
-            // A. Download Gambar
+            // A. Download
             const { data: fileData, error: downloadError } =
               await supabase.storage
                 .from("event-photos")
                 .download(photo.file_path);
 
-            if (downloadError) throw downloadError;
+            if (downloadError) throw new Error("Download failed");
 
             const buffer = Buffer.from(await fileData.arrayBuffer());
 
-            // B. Fungsi Helper Indexing
+            // B. Indexing
             const indexPhotoToAWS = async () => {
               const command = new IndexFacesCommand({
                 CollectionId: collectionId,
                 Image: { Bytes: buffer },
                 ExternalImageId: photo.id,
-                MaxFaces: 10,
+                MaxFaces: 15, // Deteksi max 15 wajah per foto
                 QualityFilter: "AUTO",
               });
               return await rekognitionClient.send(command);
@@ -82,7 +86,6 @@ export async function POST(req: Request) {
             try {
               awsResponse = await indexPhotoToAWS();
             } catch (awsErr: any) {
-              // Retry jika collection belum ada
               if (awsErr.name === "ResourceNotFoundException") {
                 try {
                   await rekognitionClient.send(
@@ -99,28 +102,27 @@ export async function POST(req: Request) {
               ? awsResponse.FaceRecords.length
               : 0;
 
-            // C. SUKSES -> Simpan Data & Kosongkan Error Log
+            // C. SUKSES
             await supabase
               .from("photos")
               .update({
                 is_processed: true,
                 faces_indexed: faceCount,
                 indexed_at: new Date().toISOString(),
-                error_log: null, // Reset error jika ada
+                error_log: null,
               })
               .eq("id", photo.id);
 
             return { id: photo.id, status: "success", faces: faceCount };
           } catch (err: any) {
-            console.error(`❌ GAGAL photo ${photo.id}:`, err.message);
-
-            // D. GAGAL -> Simpan Pesan Error
+            console.error(`❌ GAGAL ${photo.id}:`, err.message);
+            // Simpan error, tandai processed biar ga macet
             await supabase
               .from("photos")
               .update({
                 is_processed: true,
                 faces_indexed: 0,
-                error_log: err.message, // 👈 Simpan error biar tau kenapa gagal
+                error_log: err.message,
               })
               .eq("id", photo.id);
 
