@@ -88,7 +88,7 @@ export async function POST(req: Request) {
                 Image: { Bytes: buffer },
                 ExternalImageId: photo.id,
                 MaxFaces: 15,
-                QualityFilter: "AUTO",
+                QualityFilter: "NONE",
               });
               return await rekognitionClient.send(command);
             };
