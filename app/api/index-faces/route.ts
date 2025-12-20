@@ -7,9 +7,10 @@ import {
 } from "@aws-sdk/client-rekognition";
 import pLimit from "p-limit";
 
-export const maxDuration = 60; // Force Vercel Pro Timeout
+export const maxDuration = 60; // Timeout Vercel Pro
 export const dynamic = "force-dynamic";
 
+// Init AWS Client
 const rekognitionClient = new RekognitionClient({
   region: process.env.AWS_REGION!,
   credentials: {
@@ -17,6 +18,9 @@ const rekognitionClient = new RekognitionClient({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
   },
 });
+
+// ✨ HELPER BARU: Fungsi untuk "Tidur" sebentar (Pause)
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function POST(req: Request) {
   // Cek Env Var Wajib
@@ -31,19 +35,17 @@ export async function POST(req: Request) {
   );
 
   try {
-    const body = await req.json().catch(() => ({})); // Handle jika body kosong
+    const body = await req.json().catch(() => ({})); 
     const { eventId } = body;
 
     // --- LOGIC QUERY DATABASE ---
     let query = supabase
       .from("photos")
-      .select("id, file_path, event_id") // Ambil event_id juga
+      .select("id, file_path, event_id")
       .eq("is_processed", false)
       .order("created_at", { ascending: false }) // Prioritas Terbaru
-      .limit(25); // Batch size 25 (Aman anti timeout)
+      .limit(25); // Batch size 25
 
-    // JIKA ada Event ID spesifik -> Filter event itu saja
-    // JIKA TIDAK ada -> Ambil dari semua event (Global Mode)
     if (eventId) {
       query = query.eq("event_id", eventId);
     }
@@ -62,58 +64,66 @@ export async function POST(req: Request) {
 
     console.log(`🚀 TURBO MODE: Processing ${photos.length} photos (${eventId ? 'Event Specific' : 'Global'})...`);
     
-    const limit = pLimit(5); // Speed limit aman
+    // Limit concurrency 5 (Biar AWS gak kaget)
+    const limit = pLimit(5);
 
     const results = await Promise.all(
       photos.map((photo) => {
         return limit(async () => {
-          // Pastikan Collection ID sesuai event fotonya
           const collectionId = `event-${photo.event_id}`; 
 
           try {
-            // A. Download
+            // A. Download Foto
             const { data: fileData, error: downloadError } =
               await supabase.storage
                 .from("event-photos")
                 .download(photo.file_path);
 
             if (downloadError) throw new Error("Download failed");
-
             const buffer = Buffer.from(await fileData.arrayBuffer());
 
-            // B. Indexing
-            const indexPhotoToAWS = async () => {
-              const command = new IndexFacesCommand({
-                CollectionId: collectionId,
-                Image: { Bytes: buffer },
-                ExternalImageId: photo.id,
-                MaxFaces: 15,
-                QualityFilter: "NONE",
-              });
-              return await rekognitionClient.send(command);
+            // ✨ LOGIC BARU: Kirim ke AWS dengan RETRY (3x Percobaan)
+            const sendToAwsWithRetry = async (attempt = 1): Promise<any> => {
+              try {
+                const command = new IndexFacesCommand({
+                  CollectionId: collectionId,
+                  Image: { Bytes: buffer },
+                  ExternalImageId: photo.id,
+                  MaxFaces: 15,
+                  QualityFilter: "NONE", // Tetap NONE sesuai requestmu
+                });
+                return await rekognitionClient.send(command);
+
+              } catch (err: any) {
+                // Kasus 1: Collection Belum Ada -> Buat & Coba Lagi
+                if (err.name === "ResourceNotFoundException") {
+                  try {
+                    await rekognitionClient.send(new CreateCollectionCommand({ CollectionId: collectionId }));
+                  } catch (e) {} 
+                  return sendToAwsWithRetry(attempt); // Coba lagi langsung
+                }
+
+                // Kasus 2: RATE LIMIT (Ngebut) -> Tunggu & Coba Lagi
+                if (
+                   (err.name === "ProvisionedThroughputExceededException" || 
+                    err.name === "ThrottlingException") && 
+                   attempt <= 3 // Maksimal 3x coba
+                ) {
+                   console.log(`⚠️ Rate Limit di foto ${photo.id}. Tunggu ${attempt} detik...`);
+                   await wait(1000 * attempt); // Tunggu 1 detik, lalu 2 detik...
+                   return sendToAwsWithRetry(attempt + 1); // Coba lagi (rekursif)
+                }
+
+                throw err; // Lempar error lain (file rusak dll)
+              }
             };
 
-            let awsResponse;
-            try {
-              awsResponse = await indexPhotoToAWS();
-            } catch (awsErr: any) {
-              if (awsErr.name === "ResourceNotFoundException") {
-                try {
-                  await rekognitionClient.send(
-                    new CreateCollectionCommand({ CollectionId: collectionId })
-                  );
-                } catch (e) {}
-                awsResponse = await indexPhotoToAWS();
-              } else {
-                throw awsErr;
-              }
-            }
+            // Jalankan fungsi sakti
+            const awsResponse = await sendToAwsWithRetry();
 
-            const faceCount = awsResponse.FaceRecords
-              ? awsResponse.FaceRecords.length
-              : 0;
+            const faceCount = awsResponse.FaceRecords ? awsResponse.FaceRecords.length : 0;
 
-            // C. SUKSES UPDATE DB
+            // C. SUKSES - Update DB
             const { error: updateError } = await supabase
               .from("photos")
               .update({
@@ -127,8 +137,10 @@ export async function POST(req: Request) {
             if (updateError) throw new Error(updateError.message);
 
             return { id: photo.id, status: "success", faces: faceCount };
+
           } catch (err: any) {
-            console.error(`❌ GAGAL ${photo.id}:`, err.message);
+            console.error(`❌ GAGAL FINAL ${photo.id}:`, err.message);
+            // Simpan error log jika sudah mentok gagal 3x
             await supabase
               .from("photos")
               .update({
