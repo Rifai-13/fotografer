@@ -7,7 +7,7 @@ import {
 } from "@aws-sdk/client-rekognition";
 import pLimit from "p-limit";
 
-export const maxDuration = 60; // ⚡ FORCE VERCEL PRO (60 Detik Timeout)
+export const maxDuration = 60; 
 export const dynamic = "force-dynamic";
 
 // Init AWS
@@ -20,6 +20,12 @@ const rekognitionClient = new RekognitionClient({
 });
 
 export async function POST(req: Request) {
+  // 🔍 DEBUG: Cek apakah Service Role Key terbaca?
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.error("❌ FATAL: SUPABASE_SERVICE_ROLE_KEY Hilang/Undefined!");
+    return NextResponse.json({ error: "Server Misconfiguration: Missing Key" }, { status: 500 });
+  }
+
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -29,14 +35,12 @@ export async function POST(req: Request) {
   try {
     const { eventId } = await req.json();
 
-    // 1. AMBIL LEBIH BANYAK (50 FOTO SEKALIGUS)
-    // Karena kita pakai p-limit, 50 foto masih aman dalam 60 detik.
     const { data: photos, error: fetchError } = await supabase
       .from("photos")
       .select("id, file_path")
       .eq("event_id", eventId)
       .eq("is_processed", false)
-      .limit(50); // 🚀 NAIKKAN JADI 50
+      .limit(50);
 
     if (fetchError) throw fetchError;
 
@@ -48,12 +52,8 @@ export async function POST(req: Request) {
       });
     }
 
-    console.log(`🚀 TURBO MODE: Processing ${photos.length} photos...`);
+    console.log(`🚀 Processing ${photos.length} photos...`);
     const collectionId = `event-${eventId}`;
-
-    // 🔥 NAIKKAN CONCURRENCY JADI 10
-    // Artinya: 10 Foto diproses BERSAMAAN.
-    // 50 foto akan selesai dalam 5 gelombang (sangat cepat).
     const limit = pLimit(10); 
 
     const results = await Promise.all(
@@ -67,16 +67,15 @@ export async function POST(req: Request) {
                 .download(photo.file_path);
 
             if (downloadError) throw new Error("Download failed");
-
             const buffer = Buffer.from(await fileData.arrayBuffer());
 
-            // B. Indexing
+            // B. Indexing AWS
             const indexPhotoToAWS = async () => {
               const command = new IndexFacesCommand({
                 CollectionId: collectionId,
                 Image: { Bytes: buffer },
                 ExternalImageId: photo.id,
-                MaxFaces: 15, // Deteksi max 15 wajah per foto
+                MaxFaces: 15,
                 QualityFilter: "AUTO",
               });
               return await rekognitionClient.send(command);
@@ -102,8 +101,8 @@ export async function POST(req: Request) {
               ? awsResponse.FaceRecords.length
               : 0;
 
-            // C. SUKSES
-            await supabase
+            // C. SUKSES - UPDATE DB (DENGAN CEK ERROR)
+            const { error: updateError } = await supabase
               .from("photos")
               .update({
                 is_processed: true,
@@ -112,11 +111,19 @@ export async function POST(req: Request) {
                 error_log: null,
               })
               .eq("id", photo.id);
+            
+            // 🚨 CEK JIKA UPDATE GAGAL
+            if (updateError) {
+                console.error(`❌ DB UPDATE ERROR photo ${photo.id}:`, updateError.message);
+                throw new Error(`DB Update Failed: ${updateError.message}`);
+            }
 
             return { id: photo.id, status: "success", faces: faceCount };
+
           } catch (err: any) {
-            console.error(`❌ GAGAL ${photo.id}:`, err.message);
-            // Simpan error, tandai processed biar ga macet
+            console.error(`❌ GAGAL photo ${photo.id}:`, err.message);
+            
+            // Coba simpan error log (tapi kalau key salah, ini juga bakal gagal)
             await supabase
               .from("photos")
               .update({
@@ -138,6 +145,7 @@ export async function POST(req: Request) {
       results,
     });
   } catch (error: any) {
+    console.error("Main API Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
