@@ -7,10 +7,9 @@ import {
 } from "@aws-sdk/client-rekognition";
 import pLimit from "p-limit";
 
-export const maxDuration = 60; 
+export const maxDuration = 60; // Force Vercel Pro Timeout
 export const dynamic = "force-dynamic";
 
-// Init AWS
 const rekognitionClient = new RekognitionClient({
   region: process.env.AWS_REGION!,
   credentials: {
@@ -20,10 +19,9 @@ const rekognitionClient = new RekognitionClient({
 });
 
 export async function POST(req: Request) {
-  // 🔍 DEBUG: Cek apakah Service Role Key terbaca?
+  // Cek Env Var Wajib
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    console.error("❌ FATAL: SUPABASE_SERVICE_ROLE_KEY Hilang/Undefined!");
-    return NextResponse.json({ error: "Server Misconfiguration: Missing Key" }, { status: 500 });
+    return NextResponse.json({ error: "Server Misconfiguration" }, { status: 500 });
   }
 
   const supabase = createClient(
@@ -33,14 +31,24 @@ export async function POST(req: Request) {
   );
 
   try {
-    const { eventId } = await req.json();
+    const body = await req.json().catch(() => ({})); // Handle jika body kosong
+    const { eventId } = body;
 
-    const { data: photos, error: fetchError } = await supabase
+    // --- LOGIC QUERY DATABASE ---
+    let query = supabase
       .from("photos")
-      .select("id, file_path")
-      .eq("event_id", eventId)
+      .select("id, file_path, event_id") // Ambil event_id juga
       .eq("is_processed", false)
-      .limit(25);
+      .order("created_at", { ascending: false }) // Prioritas Terbaru
+      .limit(25); // Batch size 25 (Aman anti timeout)
+
+    // JIKA ada Event ID spesifik -> Filter event itu saja
+    // JIKA TIDAK ada -> Ambil dari semua event (Global Mode)
+    if (eventId) {
+      query = query.eq("event_id", eventId);
+    }
+
+    const { data: photos, error: fetchError } = await query;
 
     if (fetchError) throw fetchError;
 
@@ -52,13 +60,16 @@ export async function POST(req: Request) {
       });
     }
 
-    console.log(`🚀 Processing ${photos.length} photos...`);
-    const collectionId = `event-${eventId}`;
-    const limit = pLimit(10); 
+    console.log(`🚀 TURBO MODE: Processing ${photos.length} photos (${eventId ? 'Event Specific' : 'Global'})...`);
+    
+    const limit = pLimit(5); // Speed limit aman
 
     const results = await Promise.all(
       photos.map((photo) => {
         return limit(async () => {
+          // Pastikan Collection ID sesuai event fotonya
+          const collectionId = `event-${photo.event_id}`; 
+
           try {
             // A. Download
             const { data: fileData, error: downloadError } =
@@ -67,9 +78,10 @@ export async function POST(req: Request) {
                 .download(photo.file_path);
 
             if (downloadError) throw new Error("Download failed");
+
             const buffer = Buffer.from(await fileData.arrayBuffer());
 
-            // B. Indexing AWS
+            // B. Indexing
             const indexPhotoToAWS = async () => {
               const command = new IndexFacesCommand({
                 CollectionId: collectionId,
@@ -101,7 +113,7 @@ export async function POST(req: Request) {
               ? awsResponse.FaceRecords.length
               : 0;
 
-            // C. SUKSES - UPDATE DB (DENGAN CEK ERROR)
+            // C. SUKSES UPDATE DB
             const { error: updateError } = await supabase
               .from("photos")
               .update({
@@ -111,19 +123,12 @@ export async function POST(req: Request) {
                 error_log: null,
               })
               .eq("id", photo.id);
-            
-            // 🚨 CEK JIKA UPDATE GAGAL
-            if (updateError) {
-                console.error(`❌ DB UPDATE ERROR photo ${photo.id}:`, updateError.message);
-                throw new Error(`DB Update Failed: ${updateError.message}`);
-            }
+
+            if (updateError) throw new Error(updateError.message);
 
             return { id: photo.id, status: "success", faces: faceCount };
-
           } catch (err: any) {
-            console.error(`❌ GAGAL photo ${photo.id}:`, err.message);
-            
-            // Coba simpan error log (tapi kalau key salah, ini juga bakal gagal)
+            console.error(`❌ GAGAL ${photo.id}:`, err.message);
             await supabase
               .from("photos")
               .update({
@@ -145,7 +150,6 @@ export async function POST(req: Request) {
       results,
     });
   } catch (error: any) {
-    console.error("Main API Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

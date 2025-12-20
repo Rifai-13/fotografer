@@ -8,72 +8,74 @@ export default function AIBackgroundWorker() {
   const [status, setStatus] = useState("");
   const pathname = usePathname();
   
-  // Gunakan Ref untuk mencegah double-execution
   const isLooping = useRef(false);
 
   useEffect(() => {
-    // Hanya jalan di dashboard
-    if (!pathname.includes("/dashboard")) return;
+    // Jalankan worker jika di Dashboard Utama ATAU di halaman Manage Event
+    const isDashboard = pathname === "/dashboard";
+    const isManagePage = pathname.includes("/manage");
+
+    if (!isDashboard && !isManagePage) return;
 
     const processQueue = async () => {
-      // Ambil Event ID dari URL (biar prioritas ke event yang sedang dibuka admin)
-      // Contoh URL: /dashboard/events/123/manage -> ambil 123
-      const pathParts = pathname.split("/");
-      const eventIndex = pathParts.indexOf("events");
-      const currentEventId = (eventIndex !== -1 && pathParts[eventIndex + 1]) 
-        ? pathParts[eventIndex + 1] 
-        : null;
+      // 1. Cek Mode: Specific Event atau Global?
+      let currentEventId = null;
+      
+      if (isManagePage) {
+        // Ambil ID dari URL: /dashboard/events/123/manage
+        const pathParts = pathname.split("/");
+        const eventIndex = pathParts.indexOf("events");
+        currentEventId = (eventIndex !== -1 && pathParts[eventIndex + 1]) 
+          ? pathParts[eventIndex + 1] 
+          : null;
+      }
 
-      // Jika tidak ada event specific, mungkin ambil random/terbaru (opsional)
-      // Untuk sekarang kita wajibkan ada eventId agar aman
-      if (!currentEventId) return;
+      // Jika di Dashboard utama, currentEventId dibiarkan NULL (Global Mode)
 
       if (isProcessing) return;
       setIsProcessing(true);
       isLooping.current = true;
 
       try {
-        setStatus("🚀 Turbo AI: Memproses 50 Foto...");
+        const modeText = currentEventId ? "Fokus Event..." : "Mode Global 🌍";
+        setStatus(`🚀 Turbo AI: ${modeText}`);
         
         const res = await fetch("/api/index-faces", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ eventId: currentEventId }),
+          body: JSON.stringify({ 
+            eventId: currentEventId // Kirim ID jika ada, atau null jika global
+          }),
         });
 
         const data = await res.json();
 
         if (data.processedCount > 0) {
-          // 🔥 LOGIC RAKUS:
-          // Kalau tadi berhasil proses foto, JANGAN ISTIRAHAT.
-          // Langsung gas lagi detik itu juga!
           setStatus(`✅ ${data.processedCount} Selesai! Lanjut lagi...`);
           setIsProcessing(false);
           
-          // Panggil diri sendiri lagi (Recursion)
           if (isLooping.current) {
-             processQueue(); 
+             processQueue(); // Gas lagi tanpa henti
           }
         } else {
-          // Kalau return 0, berarti sudah habis. Baru boleh istirahat.
-          setStatus("✨ Semua foto event ini selesai!");
+          setStatus("✨ Antrian kosong. Istirahat.");
           setIsProcessing(false);
           isLooping.current = false;
           
-          // Cek lagi nanti 5 detik kemudian (siapa tau ada upload baru)
+          // Cek lagi 10 detik kemudian
           setTimeout(() => {
-             if (pathname.includes("/dashboard")) processQueue();
-          }, 5000);
+             // Cek path lagi sebelum restart (takutnya user dah pindah halaman)
+             if (window.location.pathname.includes("/dashboard")) processQueue();
+          }, 10000);
         }
 
       } catch (error) {
         console.error("AI Worker Error:", error);
         setStatus("⚠️ Error, retrying...");
         setIsProcessing(false);
-        // Kalau error, kasih napas 3 detik baru coba lagi
         setTimeout(() => {
-            if (pathname.includes("/dashboard")) processQueue();
-        }, 3000);
+            if (window.location.pathname.includes("/dashboard")) processQueue();
+        }, 5000);
       }
     };
 
@@ -81,15 +83,15 @@ export default function AIBackgroundWorker() {
     const timer = setTimeout(processQueue, 1000);
     return () => {
         clearTimeout(timer);
-        isLooping.current = false; // Stop loop kalau pindah halaman
+        isLooping.current = false;
     };
 
-  }, [pathname]); // Re-run kalau pindah event
+  }, [pathname]);
 
   if (!status) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 bg-gray-900/90 text-white text-xs px-4 py-3 rounded-xl shadow-2xl z-50 flex items-center gap-3 border border-gray-700 backdrop-blur-md">
+    <div className="fixed bottom-4 right-4 bg-gray-900/90 text-white text-xs px-4 py-3 rounded-xl shadow-2xl z-50 flex items-center gap-3 border border-gray-700 backdrop-blur-md transition-all duration-300 hover:scale-105 cursor-pointer">
       <div className={`w-2 h-2 rounded-full ${isProcessing ? 'bg-green-400 animate-ping' : 'bg-gray-500'}`}></div>
       <span className="font-mono">{status}</span>
     </div>
