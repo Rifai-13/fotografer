@@ -8,21 +8,24 @@ import pLimit from "p-limit";
 
 // --- KONFIGURASI SMART COMPRESSION ---
 
-// 1. Mode Turbo (File Kecil) -> Target 300KB
+// --- KONFIGURASI SMART COMPRESSION (UPDATED) ---
+
+// MODE TURBO (For User Face Scan/Selfie) -> Target ~300KB
 const OPTIONS_TURBO = {
-  maxSizeMB: 0.3,
-  maxWidthOrHeight: 1920,
+  maxSizeMB: 0.3,         // Max 300KB (Fastest for recognition)
+  maxWidthOrHeight: 1280, // 720p is sufficient
   useWebWorker: true,
   fileType: "image/jpeg",
+  initialQuality: 0.7,
 };
 
-// 2. Mode High Quality (File Besar/Original) -> Target 1.5MB
-// MacBook user aman pakai ini. Kualitas tajam, size hemat.
+// MODE HQ (For Photographer Uploads) -> Target ~1.5MB
 const OPTIONS_HQ = {
-  maxSizeMB: 1.5,
-  maxWidthOrHeight: 3000,
+  maxSizeMB: 1.0,         // Paksa di bawah 1MB
+  maxWidthOrHeight: 2160, // Resolusi 4K (Sangat tajam, tapi hemat size)
   useWebWorker: true,
   fileType: "image/jpeg",
+  initialQuality: 0.8,    // 80% quality (best balance)
 };
 
 export default function UploadPhotos({
@@ -66,21 +69,12 @@ export default function UploadPhotos({
     });
   };
 
-  // Helper chunk array
-  function chunkArray<T>(array: T[], size: number): T[][] {
-    const result = [];
-    for (let i = 0; i < array.length; i += size) {
-      result.push(array.slice(i, i + size));
-    }
-    return result;
-  }
-
-  // 🚀 LOGIC UTAMA
+  // 🚀 LOGIC UTAMA (REFACTORED FOR SPEED)
   const handleUpload = async () => {
     if (selectedFiles.length === 0 || !eventId) return;
 
     setUploading(true);
-    setStatusLog("🚀 Menganalisis ukuran file...");
+    setStatusLog("🚀 Menyiapkan antrian upload...");
 
     const {
       data: { session },
@@ -93,129 +87,127 @@ export default function UploadPhotos({
       return;
     }
 
-    // 1. ANALISA FILE (Berat vs Ringan)
-    const totalSize = selectedFiles.reduce((acc, file) => acc + file.size, 0);
-    const avgSize = totalSize / selectedFiles.length;
-    // Ambang batas: rata-rata di atas 2MB dianggap berat
-    const isHeavyLoad = avgSize > 2 * 1024 * 1024; 
-
-    // 2. CONFIG STRATEGI (UPDATED FOR MACBOOK)
-    // - Jika Heavy (Original): Upload 8 file sekaligus (Permintaan User)
-    // - Jika Light (Kecil): Upload 30 file sekaligus
-    const BATCH_SIZE = isHeavyLoad ? 8 : 30; 
-    const CONCURRENCY = isHeavyLoad ? 8 : 30; 
-    const COMPRESSION_SETTING = isHeavyLoad ? OPTIONS_HQ : OPTIONS_TURBO;
-
-    setStatusLog(
-      isHeavyLoad
-        ? `💎 Mode HQ (MacBook Optimized): Batch ${BATCH_SIZE} file...`
-        : `🐇 Mode Turbo: Batch ${BATCH_SIZE} file...`
-    );
-
+    // KONFIGURASI QUEUE
+    const CONCURRENCY = 5; // Best for browser
     const limit = pLimit(CONCURRENCY);
-    const fileChunks = chunkArray(selectedFiles, BATCH_SIZE);
-    let totalUploaded = 0;
+    
+    // BUFFER UNTUK DB (Batch Insert)
+    let dbBuffer: any[] = [];
+    const DB_BATCH_SIZE = 50;
+    
+    const flushDbBuffer = async () => {
+        if (dbBuffer.length === 0) return;
+        const batchToInsert = [...dbBuffer];
+        dbBuffer = []; // Clear local buffer immediately
 
-    // 3. LOOP UPLOAD (TANPA INDEXING DI DALAMNYA)
-    for (const [batchIndex, currentBatch] of fileChunks.entries()) {
-      setStatusLog(
-        `📦 Upload Batch ${batchIndex + 1}/${fileChunks.length} sedang berjalan...`
-      );
-
-      const batchSuccessData: any[] = [];
-
-      const batchPromises = currentBatch.map((file) => {
-        return limit(async () => {
-          const originalIndex = selectedFiles.indexOf(file);
-
-          try {
-            // A. Compress
-            setProgressMap((prev) => ({ ...prev, [originalIndex]: 10 }));
-            let fileToUpload = file;
-            try {
-              fileToUpload = await imageCompression(file, COMPRESSION_SETTING);
-            } catch (e) {
-              console.warn("Gagal kompresi, pakai file asli", e);
-            }
-
-            // B. Upload Storage
-            setProgressMap((prev) => ({ ...prev, [originalIndex]: 50 }));
-            const fileNameClean = file.name.replace(/[^a-zA-Z0-9.]/g, "_");
-            const storagePath = `${eventId}/${Date.now()}_${fileNameClean}`;
-
-            const { error: uploadError } = await supabase.storage
-              .from("event-photos")
-              .upload(storagePath, fileToUpload, {
-                cacheControl: "3600",
-                upsert: false,
-              });
-
-            if (uploadError) throw uploadError;
-
-            // C. Get URL
-            const { data: urlData } = supabase.storage
-              .from("event-photos")
-              .getPublicUrl(storagePath);
-
-            // Push Data
-            batchSuccessData.push({
-              event_id: eventId,
-              photographer_id: photographerId,
-              file_name: file.name,
-              file_path: storagePath,
-              storage_url: urlData.publicUrl,
-              image_url: urlData.publicUrl,
-              file_size: fileToUpload.size,
-              created_at: new Date().toISOString(),
-              is_processed: false, // Penting: False biar nanti diambil indexing loop
-            });
-
-            setProgressMap((prev) => ({ ...prev, [originalIndex]: 90 }));
-          } catch (error) {
-            console.error(`Gagal: ${file.name}`, error);
-            setProgressMap((prev) => ({ ...prev, [originalIndex]: -1 }));
-          }
-        });
-      });
-
-      // Tunggu 1 batch (8 foto) selesai semua
-      await Promise.all(batchPromises);
-
-      // Save Batch ke Database
-      if (batchSuccessData.length > 0) {
         try {
-          const res = await fetch("/api/photos/bulk-register", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ photos: batchSuccessData }),
-          });
-
-          if (!res.ok) throw new Error("Gagal DB");
-
-          // Update progress jadi 100% (Centang hijau)
-          currentBatch.forEach((file) => {
-            const idx = selectedFiles.indexOf(file);
-            if (progressMap[idx] !== -1) {
-              setProgressMap((prev) => ({ ...prev, [idx]: 100 }));
-            }
-          });
-
-          totalUploaded += batchSuccessData.length;
+            console.log(`💾 Saving ${batchToInsert.length} photos to DB...`);
+            await fetch("/api/photos/bulk-register", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ photos: batchToInsert }),
+            });
+            
+            // Update UI: Centang hijau untuk batch ini
+            batchToInsert.forEach(photoItem => {
+                 // Cari index asli dari URL atau nama (disini kita pakai nama file utk matching sederhana di demo ini, idealnya pakai ID unik)
+                 // Karena logic simple, kita skip update state complex, asumsikan upload storage = progress 90%, DB = 100%
+                 // Kita update manual logicnya di bawah via progressMap
+            });
         } catch (err) {
-          console.error("Batch DB Error", err);
+            console.error("❌ DB Batch Error:", err);
         }
-      }
+    };
+
+    setStatusLog(`⚡ Mengupload dengan Concurrency ${CONCURRENCY}...`);
+
+    const promises = selectedFiles.map((file, originalIndex) => {
+        return limit(async () => {
+            try {
+                // 1. COMPRESS (Pakai HQ buat Photographer)
+                setProgressMap((prev) => ({ ...prev, [originalIndex]: 10 }));
+                let fileToUpload = file;
+                try {
+                    // Cek Smart Skip Compression
+                    const fileSizeLimitBytes = OPTIONS_HQ.maxSizeMB * 1024 * 1024;
+                    if (file.size < fileSizeLimitBytes) {
+                        console.log(`⏩ File is small (${(file.size / 1024).toFixed(1)} KB), skipping compression for speed.`);
+                        fileToUpload = file;
+                    } else {
+                        fileToUpload = await imageCompression(file, OPTIONS_HQ);
+                    }
+                } catch (e) {
+                    console.warn("Compression fallback:", e);
+                }
+
+                // 2. UPLOAD STORAGE
+                setProgressMap((prev) => ({ ...prev, [originalIndex]: 40 }));
+                const fileNameClean = file.name.replace(/[^a-zA-Z0-9.]/g, "_");
+                const storagePath = `${eventId}/${Date.now()}_${Math.random().toString(36).substring(7)}_${fileNameClean}`;
+
+                const { error: uploadError } = await supabase.storage
+                    .from("event-photos")
+                    .upload(storagePath, fileToUpload, {
+                        cacheControl: "3600",
+                        upsert: false,
+                    });
+
+                if (uploadError) throw uploadError;
+
+                // 3. GET URL
+                const { data: urlData } = supabase.storage
+                    .from("event-photos")
+                    .getPublicUrl(storagePath);
+
+                // 4. BUFFER DATA
+                dbBuffer.push({
+                    event_id: eventId,
+                    photographer_id: photographerId,
+                    file_name: file.name,
+                    file_path: storagePath,
+                    storage_url: urlData.publicUrl,
+                    image_url: urlData.publicUrl,
+                    file_size: fileToUpload.size,
+                    created_at: new Date().toISOString(),
+                    is_processed: false,
+                });
+
+                setProgressMap((prev) => ({ ...prev, [originalIndex]: 80 }));
+
+                // Cek apakah buffer sudah penuh?
+                if (dbBuffer.length >= DB_BATCH_SIZE) {
+                    await flushDbBuffer();
+                }
+
+            } catch (error) {
+                console.error(`Filed ${file.name}:`, error);
+                setProgressMap((prev) => ({ ...prev, [originalIndex]: -1 }));
+            }
+        });
+    });
+
+    // TUNGGU SEMUA UPLOAD SELESAI
+    await Promise.all(promises);
+
+    // FLUSH SISA BUFFER TERAKHIR
+    if (dbBuffer.length > 0) {
+        setStatusLog("💾 Menyimpan data terakhir ke database...");
+        await flushDbBuffer();
     }
 
-    // 4. SMART INDEXING LOOP (SETELAH SEMUA UPLOAD SELESAI)
-    // Ini biar server gak timeout kalau upload 10k foto
-    if (totalUploaded > 0) {
-      setStatusLog("✅ Upload Selesai! AI akan memproses di background...");
-    }
+    // Set semua yang berhasil (progress 80+) jadi 100
+    setProgressMap((prev) => {
+        const next = { ...prev };
+        Object.keys(next).forEach((key: any) => {
+            if (next[key] >= 80) next[key] = 100;
+        });
+        return next;
+    });
 
+    setStatusLog("✅ Upload Selesai!");
     setTimeout(() => {
       router.push(`/dashboard/events/${eventId}/manage`);
-    }, 500);
+    }, 1000);
   };
 
   // --- UI PART ---

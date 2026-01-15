@@ -172,8 +172,26 @@ export default function ScanPage() {
       setError(null);
 
       // 1. Ubah Base64 (Captured Image) menjadi File Object
-      // Ini penting agar bisa masuk ke FormData sebagai file upload
-      const file = dataURLtoFile(capturedImage, "selfie.jpg");
+      const rawFile = dataURLtoFile(capturedImage, "selfie.jpg");
+
+      // OPTIMISASI: Compress dulu sebelum kirim ke API (TURBO MODE)
+      const OPTIONS_TURBO = {
+        maxSizeMB: 0.3,
+        maxWidthOrHeight: 1280,
+        useWebWorker: true,
+        fileType: "image/jpeg",
+        initialQuality: 0.7,
+      };
+      
+      let file = rawFile;
+      try {
+        // Dynamic import supaya tidak memberatkan load awal jika belum dibutuhkan
+        const imageCompression = (await import("browser-image-compression")).default;
+        console.log("Compressing selfie for speed...");
+        file = await imageCompression(rawFile, OPTIONS_TURBO);
+      } catch (e) {
+        console.warn("Selfie compression failed, sending raw.", e);
+      }
 
       // 2. Siapkan FormData
       const formData = new FormData();
